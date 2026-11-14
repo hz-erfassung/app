@@ -28,11 +28,15 @@ Vorschau in Claude Code: `hanna-erfassung` in `AI_Projekte/.claude/launch.json`.
 
 Durchgespielt am 14.11. (Testmodus, Browser 375 px): Mittel aus `konfig.json` laden, Einnahme, Wachphase starten und beenden, Fokus, Nebenwirkung mit Rückgängig, Kaffee, Blutdruck-Dialog, Ändern über die Tagesliste, Server aus (App lädt aus dem Service Worker, Erfassen geht, „offen“), Server an (nachgeladen). Die hochgeladene Datei lief durch `erfassung_import.py` auf einer Kopie von `hanna.db`: 8 Zeilen, 0 ungültig, Einnahme und Aufwachzeit richtig abgeleitet.
 
-## Offen vor dem Betrieb
+## Betrieb
 
-1. **GitHub:** öffentliches Repo `hz-erfassung/app` (Adresse `https://hz-erfassung.github.io/app/`), Pages aus `main` / `docs`. Freigabe nötig (Veröffentlichung). **Eigene Herkunft:** alle Projektseiten unter `https://<konto>.github.io/` teilen sich Speicher und IndexedDB, also auch Token und Einträge. Deshalb in einer eigenen, kostenlosen GitHub-Organisation nur für diese App (dann `https://<organisation>.github.io/`), nicht unter dem persönlichen Konto. Der Autor der Commits ist lokal auf die noreply-Adresse gesetzt.
-2. **Entra (eigener Tenant):** App-Registrierung „Hanna Erfassung“, Plattform *Single-page application*, Umleitung genau die Pages-Adresse mit Schrägstrich am Ende, delegiert `Files.ReadWrite`, `offline_access`, `openid`. Client-ID in `docs/konfig.js` eintragen, `STAND` in `sw.js` erhöhen.
-3. **Erster echter Lauf:** am iPhone in Safari öffnen, „Zum Home-Bildschirm“, anmelden, eine Testeingabe, am Laptop `py erfassung_import.py` (Probelauf), dann `--schreiben`.
+- **Adresse:** `https://hz-erfassung.github.io/app/`, Repo `hz-erfassung/app` (öffentlich, eigene Organisation, damit die App eine eigene Herkunft und damit eigenen Speicher hat). Pages aus `main` / `docs`. Commits unter der noreply-Adresse.
+- **Entra:** App-Registrierung „Hanna Erfassung“ (SPA, ein Mandant), Umleitung `https://hz-erfassung.github.io/app/`, delegiert `Files.ReadWrite`, `offline_access`, `openid`. Client-ID steht in `docs/konfig.js`. Microsoft nimmt die Anmeldeanfrage an (geprüft bis zur Anmeldeseite).
+- **Neue Fassung veröffentlichen:** `STAND` in `docs/sw.js` und `VERSION` in `docs/app.js` hochzählen, `npm test`, committen, `git push`. Pages braucht rund eine Minute.
+
+## Offen
+
+1. **Erster echter Lauf:** am iPhone in Safari öffnen, „Zum Home-Bildschirm“, anmelden, eine Testeingabe, am Laptop `py erfassung_import.py` (Probelauf), dann `--schreiben`.
 
 ## Bekannte Grenzen
 
