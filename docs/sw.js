@@ -2,7 +2,7 @@
 // zwischengespeichert, nie Antworten von Microsoft (Token, OneDrive-Inhalte).
 // Neue Fassung: STAND hochzählen. Dann lädt der Browser alle Dateien in einen
 // neuen Cache und wirft den alten weg; es gibt keine gemischten Stände.
-const STAND = "hanna-0.2.1";
+const STAND = "hanna-0.2.2";
 const DATEIEN = ["./", "index.html", "style.css", "app.js", "format.js", "speicher.js", "anmeldung.js",
   "abgleich.js", "konfig.js", "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png"];
 
