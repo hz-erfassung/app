@@ -226,9 +226,12 @@ export function amTag(tag, uhr) {
 /**
  * Vorbelegung der Zeit beim Abhaken: im Zeitfenster "jetzt", sonst die
  * Planzeit (wenn sie heute schon vorbei ist), markiert als geschätzt.
+ * Medikamente immer "jetzt" (0.3.1, Gremium #1): eine vorbelegte Planzeit
+ * verfälscht Abstand der Gaben und Wirkdauer. Der Plan bleibt als Chip wählbar.
  */
 export function vorbelegung(zeile, jetzt = new Date()) {
   const t = hhmm(jetzt);
+  if (zeile?.medikament) return { art: "jetzt" };
   if (!zeile?.plan || !zeile.von || !zeile.bis || (t >= zeile.von && t <= zeile.bis)) return { art: "jetzt" };
   const tag = isoLokal(jetzt).slice(0, 10);
   const plan = amTag(tag, zeile.plan);
@@ -243,4 +246,57 @@ export function letzteDosis(name, supplementId, wirksameEreignisse, gabe = null)
     ((supplementId && e.daten.supplement_id === supplementId) || norm(e.daten.mittel) === norm(name)));
   if (!t.length) return null;
   return t.sort((a, b) => Date.parse(a.zeit) - Date.parse(b.zeit))[t.length - 1].daten.dosis_mg;
+}
+
+// ------------------------------------------------------------ 0.3.1 (Gremium 14.11.2026)
+
+/**
+ * Dosis-Vorbelegung eines Medikaments (#4). Beim Ändern die bisherige Dosis.
+ * Sonst: Plan und letzte Dosis gleich oder nur eins bekannt = dieser Wert.
+ * Weichen sie ab (z. B. am Tag einer Steigerung), wird nichts vorgewählt;
+ * gespeichert wird erst nach einer Wahl.
+ * Ohne Plan-Dosis (Medikament ohne Gaben, z. B. bei Bedarf oder in der
+ * Titration) wird ebenfalls nichts vorgewählt: sonst speichert ein Tipp am
+ * Steigerungstag still die alte Dosis (Prüfer 14.11.). "Zuletzt" wird gezeigt.
+ */
+export function dosisVorschlag({ alt = null, plan = null, letzte = null } = {}) {
+  if (alt != null) return { wert: alt, abweichung: false, plan, letzte };
+  if (plan == null) return { wert: null, abweichung: false, plan, letzte };
+  if (letzte == null || letzte === plan) return { wert: plan, abweichung: false, plan, letzte };
+  return { wert: null, abweichung: true, plan, letzte };
+}
+
+/** Liegt eine Dosis ausserhalb der vorgesehenen (dosis_optionen und Plan der Gabe)? */
+export function dosisAusserhalb(mg, zeile) {
+  const erlaubt = [...(zeile?.dosis_optionen || []), zeile?.dosis_mg].filter((n) => n != null);
+  return erlaubt.length > 0 && !erlaubt.includes(mg);
+}
+
+/**
+ * Was "Rückgängig" für ein Ereignis schreibt (#2). ev = die gültige Fassung.
+ * - Erstes Erfassen (kein ersetzt): Storno, das Ereignis fällt weg.
+ * - Nach einer Änderung: die Vorfassung kommt als neue Zeile zurück, mit
+ *   ersetzt auf die Änderung. Wirksam ist danach wieder der Inhalt der
+ *   Vorfassung. Ein Storno würde die ganze Kette löschen.
+ * Kein neuer Regelteil: wirksam() hier und setze_gueltigkeit() im Import
+ * werten die Kette A <- B <- C schon so aus (C gilt). Beide gleich halten.
+ */
+export function rueckgaengig(ev, alle) {
+  if (!ev.ersetzt) return { typ: "storno", daten: {}, ersetzt: ev.id, notiz: "" };
+  const vor = alle.find((e) => e.id === ev.ersetzt);
+  if (!vor || vor.typ === "storno") throw new Error("Vorfassung nicht auf dem Gerät, bitte von Hand ändern.");
+  return { typ: vor.typ, daten: JSON.parse(JSON.stringify(vor.daten || {})), zeit: vor.zeit,
+    notiz: vor.notiz || "", ersetzt: ev.id };
+}
+
+/**
+ * Rückstand beim Hochladen (#5): Zahl der nicht hochgeladenen Einträge und
+ * Alter des ältesten (nach erfasst). alarm ab 24 Stunden.
+ */
+export function rueckstand(alle, jetzt = new Date()) {
+  const offen = alle.filter((e) => !e._sync);
+  if (!offen.length) return null;
+  const aeltestes = Math.min(...offen.map((e) => Date.parse(e.erfasst)));
+  const stunden = (jetzt.getTime() - aeltestes) / 3600e3;
+  return { anzahl: offen.length, aeltestes: new Date(aeltestes), stunden, alarm: stunden >= 24 };
 }

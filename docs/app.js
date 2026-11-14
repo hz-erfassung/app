@@ -1,17 +1,20 @@
 // Hanna Erfassung 0.3: Checkliste nach Tageszeit, Blätter statt Sofort-Speichern
 // bei Einnahmen, Befinden mit vier Skalen. Format: LOGFORMAT.md im Bereich Gesundheit.
+// 0.3.1 (Gremium 14.11.2026): Medikamente mit Zeit "jetzt", keine Dosis-Vorwahl bei
+// Abweichung vom Plan, Rückgängig nach Ändern stellt die Vorfassung her, Rückstand-Banner.
 
 import {
   neuesEreignis, isoLokal, wirksam, offeneWachphase, beschreibe, zeile as logzeile,
   NEBENWIRKUNGEN, STAERKEN, BEFINDEN, GRUENDE, GERAET_MUSTER,
   tagesplan, statusFuer, gehoertZu, vorbelegung, letzteDosis, amTag, TAGESZEITEN,
+  dosisVorschlag, dosisAusserhalb, rueckgaengig, rueckstand,
 } from "./format.js";
 import { alleEreignisse, speichere, lies, schreibe } from "./speicher.js";
 import { anmelden, abmelden, rueckkehrVerarbeiten, token, eingerichtet } from "./anmeldung.js";
 import { hochladen, ladeKonfig } from "./abgleich.js";
 import { TESTMODUS } from "./konfig.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 const $ = (id) => document.getElementById(id);
 const zustand = { alle: [], konfig: null, geraet: "iphone", tag: null, reiter: "heute", sync: { art: "" }, laeuft: false };
 
@@ -54,6 +57,19 @@ function aktuelleFassung(ev) {
   return jetzt;
 }
 
+/**
+ * Rückgängig im Hinweis: erstes Erfassen wird storniert, eine Änderung
+ * stellt die Vorfassung wieder her (format.js: rueckgaengig).
+ */
+async function macheRueckgaengig(ev) {
+  const jetzt = aktuelleFassung(ev);
+  // Inzwischen gelöscht (oder sonst nicht mehr gültig): nichts wiederbeleben
+  if (!wirksam(zustand.alle).some((e) => e.id === jetzt.id)) throw new Error("Eintrag wurde inzwischen gelöscht.");
+  const r = rueckgaengig(jetzt, zustand.alle);
+  const neu = await erfasse(r.typ, r.daten, { zeit: r.zeit, ersetzt: r.ersetzt, notiz: r.notiz });
+  toast(r.typ === "storno" ? "Rückgängig gemacht, Eintrag entfernt" : `Wiederhergestellt: ${zeitText(neu)} ${beschreibe(neu)}`);
+}
+
 let toastUhr = null;
 function toast(text, { aendern = null, rueck = null, aendernText = "Ändern" } = {}) {
   $("toasttext").textContent = text;
@@ -62,18 +78,22 @@ function toast(text, { aendern = null, rueck = null, aendernText = "Ändern" } =
   $("toastaendern").textContent = aendernText;
   $("toastaendern").onclick = () => { $("toast").hidden = true; aendern(); };
   $("toastrueck").hidden = !rueck;
-  $("toastrueck").onclick = async () => { $("toast").hidden = true; await rueck(); };
+  $("toastrueck").onclick = async () => {
+    $("toast").hidden = true;
+    try { await rueck(); } catch (f) { toast(`Nicht rückgängig gemacht: ${f.message}`); }
+  };
   clearTimeout(toastUhr);
   toastUhr = setTimeout(() => { $("toast").hidden = true; }, 10000);
 }
 const toastFuer = (ev) => toast(`${zeitText(ev)} ${beschreibe(ev)}`, {
   aendern: () => bearbeite(aktuelleFassung(ev)),
-  rueck: () => storniere(aktuelleFassung(ev)),
+  rueck: () => macheRueckgaengig(ev),
 });
 
 // ------------------------------------------------------------ Blatt
 
 function oeffneBlatt({ titel, untertitel = "", inhalt = [], knoepfe = [] }) {
+  $("toast").hidden = true;            // alter Hinweis passt nach einer Änderung im Blatt nicht mehr
   $("btitel").textContent = titel;
   $("buntertitel").textContent = untertitel;
   $("buntertitel").hidden = !untertitel;
@@ -181,22 +201,28 @@ function einnahmeBlatt(zeile, alt = null) {
   const wirk = wirksam(zustand.alle);
   const d0 = alt?.daten || {};
   const inhalt = [];
-  let nameEingabe = null, dosisText = null, dosis = null, dosisAndere = null;
+  let nameEingabe = null, dosisText = null, dosis = null, dosisAndere = null, dosisFeld = null;
 
   if (!zeile) {
     nameEingabe = el("input", { type: "text", "aria-label": "Mittel", autocomplete: "off", value: d0.mittel || "" });
     dosisText = el("input", { type: "text", "aria-label": "Dosis", value: d0.dosis || "", placeholder: "z. B. 2 Kapseln" });
     inhalt.push(feld("Mittel", nameEingabe), feld("Dosis (optional)", dosisText));
   } else if (zeile.medikament) {
-    const vorschlag = d0.dosis_mg ?? letzteDosis(zeile.name, zeile.supplement_id, wirk, zeile.gabe) ?? zeile.dosis_mg ?? null;
-    const optionen = [...new Set([...(zeile.dosis_optionen || []), ...(vorschlag != null ? [vorschlag] : [])])]
+    // Gremium #4: weicht die letzte Dosis vom Plan ab, wird nichts vorgewählt
+    const v = dosisVorschlag({ alt: d0.status === "genommen" ? d0.dosis_mg ?? null : null, plan: zeile.dosis_mg ?? null,
+      letzte: letzteDosis(zeile.name, zeile.supplement_id, wirk, zeile.gabe) });
+    const optionen = [...new Set([...(zeile.dosis_optionen || []), v.plan, v.letzte, v.wert].filter((n) => n != null))]
       .sort((a, b) => a - b).map((n) => [n, `${n} mg`]);
     optionen.push(["andere", "andere"]);
     dosisAndere = el("input", { type: "text", inputmode: "decimal", "aria-label": "Dosis in mg", hidden: true });
-    dosis = chips(optionen, { wert: vorschlag, beiWahl: (w) => { dosisAndere.hidden = w !== "andere"; } });
-    const hinweis = zeile.dosis_mg != null && vorschlag != null && vorschlag !== zeile.dosis_mg
-      ? el("div", { class: "zeitanzeige" }, `Plan: ${zeile.dosis_mg} mg`) : null;
-    inhalt.push(feld("Dosis", dosis.node, dosisAndere, hinweis));
+    dosis = chips(optionen, { wert: v.wert, beiWahl: (w) => { dosisAndere.hidden = w !== "andere"; } });
+    const vergleich = v.abweichung ? el("div", { class: "dosisvergleich" },
+      el("span", {}, `Plan: ${v.plan} mg`), el("span", {}, `Zuletzt: ${v.letzte} mg`))
+      : v.wert == null && v.letzte != null ? el("div", { class: "dosisvergleich" }, el("span", {}, `Zuletzt: ${v.letzte} mg`)) : null;
+    const titel = v.abweichung ? "Dosis: Plan und letzte Einnahme weichen ab, bitte wählen"
+      : v.wert == null ? "Dosis: bitte wählen" : "Dosis";
+    dosisFeld = feld(titel, vergleich, dosis.node, dosisAndere);
+    inhalt.push(dosisFeld);
   }
 
   const plan = zeile?.plan ? amTag(heute(), zeile.plan) : null;
@@ -220,24 +246,27 @@ function einnahmeBlatt(zeile, alt = null) {
       if (bekannt?.supplement_id) daten.supplement_id = bekannt.supplement_id;
       if (dosisText.value.trim()) daten.dosis = dosisText.value.trim();
     }
-    if (dosis) {
+    // Gremium #10: ausgelassen trägt keine Dosis
+    if (dosis && status === "genommen") {
       let mg = dosis.wert();
       if (mg === "andere") {
         const roh = dosisAndere.value.trim();
-        if (!roh && status === "ausgelassen") mg = null;
-        else {
-          mg = Number(roh.replace(",", "."));
-          if (!Number.isFinite(mg) || mg < 0.01 || mg > 5000) throw new Error("Dosis in mg angeben (0,01 bis 5000).");
-        }
+        mg = Number(roh.replace(",", "."));
+        if (!roh || !Number.isFinite(mg) || mg < 0.01 || mg > 5000) throw new Error("Dosis in mg angeben (0,01 bis 5000).");
       }
-      if (mg == null && status === "genommen") throw new Error("Welche Dosis?");
-      if (mg != null) daten.dosis_mg = mg;
+      if (mg == null) throw new Error("Welche Dosis? Bitte wählen.");
+      daten.dosis_mg = mg;
     }
     if (grund) daten.grund = grund;
     return { daten: mitZeit(daten, w), zeit: w.zeit, notiz: nz.wert() };
   };
   const speichern = async (status, grund = null) => {
     const s = sammle(status, grund);
+    if (zeile?.medikament && s.daten.dosis_mg != null && dosisAusserhalb(s.daten.dosis_mg, zeile)) {
+      const vorgesehen = [...new Set([...(zeile.dosis_optionen || []), zeile.dosis_mg].filter((n) => n != null))]
+        .sort((a, b) => a - b).map((n) => `${n} mg`).join(", ");
+      if (!confirm(`${s.daten.dosis_mg} mg ist keine vorgesehene Dosis (${vorgesehen}). Trotzdem speichern?`)) return;
+    }
     const gespeichert = await erfasse("einnahme", s.daten, { zeit: s.zeit, notiz: s.notiz, ersetzt: alt?.id || null });
     schliesseBlatt();
     toastFuer(gespeichert);
@@ -255,7 +284,7 @@ function einnahmeBlatt(zeile, alt = null) {
   const grundSchritt = () => {
     sammle("ausgelassen");                       // früh prüfen (Name, Zeit)
     const g = chips(GRUENDE.map((x) => [x, x]), { wert: d0.status === "ausgelassen" ? d0.grund ?? null : null, abwaehlbar: true });
-    oeffneBlatt({ titel, untertitel: "Ausgelassen: warum?", inhalt: [...inhalt, feld("Grund", g.node)], knoepfe: [
+    oeffneBlatt({ titel, untertitel: "Ausgelassen: warum?", inhalt: [...inhalt.filter((n) => n !== dosisFeld), feld("Grund", g.node)], knoepfe: [
       { text: "Ausgelassen speichern", klasse: "haupt", aktion: () => speichern("ausgelassen", g.wert()) },
       { text: "Zurück", aktion: () => oeffneBlatt({ titel, untertitel, inhalt, knoepfe: hauptKnoepfe }) },
     ] });
@@ -442,7 +471,7 @@ async function schnell(typ, daten) {
   catch (f) { toast(`Nicht gespeichert: ${f.message}`); return; }
   finally { setTimeout(() => { einTippLaeuft = false; }, 400); }
   toast(`${zeitText(ev)} ${beschreibe(ev)}`, { aendernText: "Zeit ändern",
-    aendern: () => bearbeite(aktuelleFassung(ev)), rueck: () => storniere(aktuelleFassung(ev)) });
+    aendern: () => bearbeite(aktuelleFassung(ev)), rueck: () => macheRueckgaengig(ev) });
 }
 
 // ------------------------------------------------------------ Zeichnen
@@ -482,7 +511,7 @@ function zeichneHeute(wirk) {
     ...weitere.map((z) => {
       const heuteGenommen = wirk.filter((e) => e.zeit.slice(0, 10) === tag && gehoertZu(e, z) && e.daten.status === "genommen");
       return el("button", { type: "button", class: "knopf", onclick: () => einnahmeBlatt(z) }, z.name,
-        el("small", { class: "leise", style: "display:block" }, heuteGenommen.length
+        el("small", { class: "leise" }, heuteGenommen.length
           ? `heute ${heuteGenommen.map((e) => `${zeitText(e)}${e.daten.dosis_mg != null ? ` ${e.daten.dosis_mg} mg` : ""}`).join(", ")}` : "bei Bedarf"));
     }),
     el("button", { type: "button", class: "knopf neben", onclick: () => einnahmeBlatt(null) }, "Anderes Mittel…"));
@@ -529,6 +558,28 @@ function zeichne() {
   else { s.textContent = zustand.sync.text ? `✓ ${zustand.sync.text}` : "✓"; s.className = "chip ok"; }
   $("hinweis").hidden = !zustand.sync.meldung;
   $("hinweis").textContent = zustand.sync.meldung || "";
+  // Gremium #5: Rückstand ab 24 h sichtbar, auf jedem Reiter
+  const r = rueckstand(zustand.alle);
+  $("rueckstand").hidden = !r?.alarm;
+  if (r?.alarm) {
+    const seit = r.stunden < 48 ? `${Math.floor(r.stunden)} Stunden` : `${Math.floor(r.stunden / 24)} Tagen`;
+    const text = `${r.anzahl} ${r.anzahl === 1 ? "Eintrag" : "Einträge"} seit ${seit} nicht hochgeladen. ` +
+      `${r.anzahl === 1 ? "Er liegt" : "Sie liegen"} nur auf diesem Gerät. Hochladen oder im Verlauf „Offene sichern“.`;
+    if ($("rueckstandtext").textContent !== text) $("rueckstandtext").textContent = text;   // nicht jede Minute neu vorlesen
+  }
+}
+
+/** Ergebnis von navigator.storage.persist() im Verlauf anzeigen (Gremium #5). */
+async function speicherSchutz() {
+  let text = "Speicher: Schutz unbekannt", ok = false;
+  try {
+    if (navigator.storage?.persist) {
+      ok = (await navigator.storage.persisted?.()) || (await navigator.storage.persist());
+      text = ok ? "Speicher: dauerhaft" : "Speicher: nicht dauerhaft, das System kann ihn räumen";
+    } else text = "Speicher: Schutz nicht verfügbar";
+  } catch { /* bleibt unbekannt */ }
+  $("speicher").textContent = text;
+  $("speicher").className = ok ? "leise" : "leise warntext";
 }
 
 const TITEL = { heute: "Heute", erfassen: "Erfassen", nacht: "Nacht", verlauf: "Verlauf" };
@@ -613,6 +664,7 @@ function verdrahten() {
 
   const anmeldenUndAbgleichen = () => anmelden().then(abgleichen).catch((f) => alert(f.message));
   $("sync").onclick = () => (zustand.sync.art === "anmelden" && eingerichtet() ? anmeldenUndAbgleichen() : abgleichen());
+  $("rueckstandknopf").onclick = () => $("sync").onclick();
   $("konto").onclick = async () => {
     if ((await lies("token"))) { await abmelden(); $("konto").textContent = "Anmelden"; zustand.sync = { art: "anmelden" }; zeichne(); }
     else anmeldenUndAbgleichen();
@@ -652,7 +704,7 @@ async function start() {
   $("version").textContent = `v${VERSION}${TESTMODUS ? " · Testmodus" : ""}`;
   verdrahten();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
-  if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+  speicherSchutz();
   zustand.geraet = (await lies("geraet")) || "iphone";
   zustand.konfig = (await lies("konfig")) || null;
   zustand.alle = await alleEreignisse();

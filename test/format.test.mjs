@@ -96,13 +96,19 @@ test("statusFuer: passende Gabe am Tag, letzte Fassung zählt", () => {
   assert.equal(letzteDosis("Medikament A", 501, [e1], "morgens"), 10);
 });
 
-test("vorbelegung: im Fenster jetzt, danach Planzeit, davor jetzt", () => {
-  const [hcMorgen] = tagesplan(konfig);
-  assert.deepEqual(vorbelegung(hcMorgen, new Date(2030, 0, 10, 8, 0)), { art: "jetzt" });
-  const v = vorbelegung(hcMorgen, new Date(2030, 0, 10, 21, 0));
+test("vorbelegung Supplement: im Fenster jetzt, danach Planzeit, davor jetzt", () => {
+  const supp = tagesplan(konfig).find((z) => z.name === "Supplement D");
+  assert.deepEqual(vorbelegung(supp, new Date(2030, 0, 10, 8, 0)), { art: "jetzt" });
+  const v = vorbelegung(supp, new Date(2030, 0, 10, 21, 0));
   assert.equal(v.art, "plan");
-  assert.equal(v.zeit.getHours() * 60 + v.zeit.getMinutes(), 7 * 60 + 15);
-  assert.deepEqual(vorbelegung(hcMorgen, new Date(2030, 0, 10, 4, 0)), { art: "jetzt" });
+  assert.equal(v.zeit.getHours() * 60 + v.zeit.getMinutes(), 7 * 60 + 30);
+  assert.deepEqual(vorbelegung(supp, new Date(2030, 0, 10, 4, 0)), { art: "jetzt" });
+});
+
+test("vorbelegung Medikament: immer jetzt, auch nach dem Fenster (Gremium #1)", () => {
+  const [medMorgen] = tagesplan(konfig);
+  assert.deepEqual(vorbelegung(medMorgen, new Date(2030, 0, 10, 9, 42)), { art: "jetzt" });
+  assert.deepEqual(vorbelegung(medMorgen, new Date(2030, 0, 10, 21, 0)), { art: "jetzt" });
 });
 
 test("letzteDosis je Gabe (Morgen 10 mg beeinflusst Mittag nicht)", () => {
@@ -110,4 +116,91 @@ test("letzteDosis je Gabe (Morgen 10 mg beeinflusst Mittag nicht)", () => {
     daten: { mittel: "Medikament A", supplement_id: 501, gabe: "morgens", status: "genommen", dosis_mg: 10 } });
   assert.equal(letzteDosis("Medikament A", 501, [m], "mittags"), null);
   assert.equal(letzteDosis("Medikament A", 501, [m], "morgens"), 10);
+});
+
+// ---- 0.3.1: Gremium 14.11.2026
+import { dosisVorschlag, dosisAusserhalb, rueckgaengig, rueckstand } from "../docs/format.js";
+import { readFileSync } from "node:fs";
+
+test("dosisVorschlag: bei Abweichung Plan/letzte keine Vorwahl (Gremium #4)", () => {
+  assert.equal(dosisVorschlag({ plan: 10, letzte: 10 }).wert, 10);
+  assert.equal(dosisVorschlag({ plan: 10, letzte: null }).wert, 10);
+  // ohne Plan-Dosis (Medikament ohne Gaben): nie still die letzte Dosis (Prüfer 14.11.)
+  assert.equal(dosisVorschlag({ plan: null, letzte: 5 }).wert, null);
+  assert.equal(dosisVorschlag({ plan: null, letzte: 5 }).letzte, 5);
+  assert.equal(dosisVorschlag({}).wert, null);
+  const steigerung = dosisVorschlag({ plan: 20, letzte: 10 });
+  assert.equal(steigerung.wert, null);
+  assert.equal(steigerung.abweichung, true);
+  assert.deepEqual([steigerung.plan, steigerung.letzte], [20, 10]);
+  assert.equal(dosisVorschlag({ alt: 15, plan: 20, letzte: 10 }).wert, 15);   // Ändern: bisherige Dosis
+});
+
+test("dosisAusserhalb: Optionen und Plan der Gabe gelten als vorgesehen", () => {
+  const [medMorgen] = tagesplan(konfig);                 // Optionen 5, 10; Plan 10
+  assert.equal(dosisAusserhalb(10, medMorgen), false);
+  assert.equal(dosisAusserhalb(5, medMorgen), false);
+  assert.equal(dosisAusserhalb(15, medMorgen), true);
+  assert.equal(dosisAusserhalb(15, { dosis_optionen: [], dosis_mg: null }), false);  // nichts bekannt: nicht fragen
+});
+
+test("Rückgängig nach Ändern: A ändern zu B, Rückgängig, A wirksam (Gremium #2)", () => {
+  const a = ev("AAAAAAAA2", "2030-01-10T08:00:00+01:00", { typ: "einnahme", zeit: "2030-01-10T07:55:00+01:00",
+    daten: { mittel: "Medikament A", gabe: "morgens", status: "genommen", dosis_mg: 10 }, notiz: "zum Frühstück" });
+  const b = ev("BBBBBBBB2", "2030-01-10T08:05:00+01:00", { typ: "einnahme", zeit: "2030-01-10T07:55:00+01:00",
+    ersetzt: a.id, daten: { mittel: "Medikament A", gabe: "morgens", status: "genommen", dosis_mg: 20 } });
+  const r = rueckgaengig(b, [a, b]);
+  assert.equal(r.typ, "einnahme");
+  assert.equal(r.ersetzt, b.id);
+  const c = ev("CCCCCCCC2", "2030-01-10T08:06:00+01:00", { ...r });
+  const w = wirksam([a, b, c]);
+  assert.deepEqual(w.map((e) => e.id), [c.id]);
+  assert.equal(w[0].daten.dosis_mg, 10);
+  assert.equal(w[0].zeit, a.zeit);
+  assert.equal(w[0].notiz, "zum Frühstück");
+  r.daten.dosis_mg = 99;                                  // Kopie, nicht dasselbe Objekt
+  assert.equal(a.daten.dosis_mg, 10);
+});
+
+test("Rückgängig beim ersten Erfassen storniert", () => {
+  const a = ev("AAAAAAAA3", "2030-01-10T08:00:00+01:00");
+  const r = rueckgaengig(a, [a]);
+  assert.deepEqual([r.typ, r.ersetzt], ["storno", a.id]);
+  const s = ev("SSSSSSSS3", "2030-01-10T08:01:00+01:00", { ...r });
+  assert.deepEqual(wirksam([a, s]), []);
+});
+
+test("Wach beenden und Rückgängig: Wachphase läuft wieder", () => {
+  const jetzt = new Date("2030-01-10T03:00:00+01:00");
+  const w = ev("WWWWWWWW3", "2030-01-10T02:00:00+01:00", { typ: "wach" });
+  const zu = ev("WWWWWWWW4", "2030-01-10T02:30:00+01:00", { typ: "wach", zeit: w.zeit, ersetzt: w.id,
+    daten: { bis: "2030-01-10T02:30:00+01:00" } });
+  const zurueck = ev("WWWWWWWW5", "2030-01-10T02:31:00+01:00", { ...rueckgaengig(zu, [w, zu]) });
+  const offen = offeneWachphase([w, zu, zurueck], jetzt);
+  assert.equal(offen.id, zurueck.id);
+  assert.equal(offen.daten.bis, undefined);
+});
+
+test("Rückgängig ohne Vorfassung auf dem Gerät: Fehler statt Storno", () => {
+  const b = ev("BBBBBBBB6", "2030-01-10T08:05:00+01:00", { ersetzt: "FEHLT00001" });
+  assert.throws(() => rueckgaengig(b, [b]), /Vorfassung/);
+});
+
+test("rueckstand: Alarm ab 24 h nach dem ältesten nicht hochgeladenen Eintrag (Gremium #5)", () => {
+  const jetzt = new Date("2030-01-11T09:00:00+01:00");
+  const alt = { ...ev("AAAAAAAA7", "2030-01-10T08:00:00+01:00"), _sync: 0 };
+  const neu = { ...ev("BBBBBBBB7", "2030-01-11T08:00:00+01:00"), _sync: 0 };
+  const hoch = { ...ev("CCCCCCCC7", "2030-01-09T08:00:00+01:00"), _sync: 1 };
+  assert.equal(rueckstand([hoch], jetzt), null);
+  assert.equal(rueckstand([neu, hoch], jetzt).alarm, false);
+  const r = rueckstand([alt, neu, hoch], jetzt);
+  assert.deepEqual([r.anzahl, r.alarm, Math.round(r.stunden)], [2, true, 25]);
+});
+
+test("Versionen gleich: app.js, sw.js, package.json (Gremium #15)", () => {
+  const lies = (p) => readFileSync(new URL(p, import.meta.url), "utf-8");
+  const app = lies("../docs/app.js").match(/const VERSION = "([^"]+)"/)[1];
+  const sw = lies("../docs/sw.js").match(/const STAND = "hanna-([^"]+)"/)[1];
+  const pkg = JSON.parse(lies("../package.json")).version;
+  assert.deepEqual([sw, pkg], [app, app]);
 });

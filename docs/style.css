@@ -27,6 +27,11 @@ h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color:
 h3 { font-size: 1.15rem; margin: 0; }
 .leise { color: var(--leise); font-size: .875rem; }
 .hinweis { max-width: 640px; margin: 8px auto 0; padding: 10px 16px; color: var(--warn); }
+.rueckstand { max-width: 608px; margin: 8px auto 0; padding: 10px 12px; display: flex; gap: 10px; align-items: center;
+  border: 2px solid var(--warn); border-radius: 12px; background: var(--flaeche); color: var(--text); }
+@media (max-width: 640px) { .rueckstand { margin: 8px 16px 0; } }
+.rueckstand span { flex: 1; }
+.warntext { color: var(--warn); }
 
 .raster { display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: 8px; }
 .knopf { min-height: 3.25rem; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--rand);
@@ -34,6 +39,7 @@ h3 { font-size: 1.15rem; margin: 0; }
 .knopf:active, .zeile:active { background: var(--rand); }
 .knopf.gross-text { grid-column: 1 / -1; font-weight: 600; }
 .knopf.neben { color: var(--leise); }
+.knopf small { display: block; }
 .chip { min-height: 2.75rem; min-width: 2.75rem; padding: 6px 12px; border-radius: 22px; border: 1px solid var(--rand);
   background: var(--flaeche); cursor: pointer; touch-action: manipulation; }
 .chip.ok { color: var(--ok); } .chip.offen { color: var(--offen); } .chip.fehler { color: var(--warn); }
@@ -103,6 +109,8 @@ dialog.blatt::backdrop { background: rgba(0,0,0,.45); }
 .feld input[type=text], .feld input[type=number], .feld input[type=datetime-local], .feld textarea {
   width: 100%; min-height: 2.75rem; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--rand); background: var(--grund); }
 .zeitanzeige { margin-top: 6px; font-size: .85rem; color: var(--leise); }
+.dosisvergleich { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; font-weight: 600; }
+.dosisvergleich span { padding: 8px 10px; border: 1px solid var(--rand); border-radius: 10px; background: var(--grund); }
 .skala { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
 .skala .chip { border-radius: 10px; padding: 0; }
 .anker { display: flex; justify-content: space-between; font-size: .75rem; color: var(--leise); margin-top: 3px; }

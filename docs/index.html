@@ -23,6 +23,10 @@
   <button id="sync" class="chip" type="button">…</button>
 </header>
 <div id="hinweis" class="hinweis" role="status" hidden></div>
+<div id="rueckstand" class="rueckstand" role="status" hidden>
+  <span id="rueckstandtext"></span>
+  <button id="rueckstandknopf" type="button" class="chip">Hochladen</button>
+</div>
 
 <main>
   <section id="reiter-heute" class="reiter">
@@ -70,6 +74,7 @@
       <button id="geraetknopf" type="button" class="chip"></button>
       <button id="export" type="button" class="chip">Offene sichern</button>
       <span id="version" class="leise"></span>
+      <span id="speicher" class="leise"></span>
       <p class="leise">Vor dem Löschen oder Neuinstallieren der App muss oben „✓“ stehen. Nicht hochgeladene Einträge liegen nur auf diesem Gerät; „Offene sichern“ gibt sie als Datei weiter.</p>
     </div>
   </section>
