@@ -99,26 +99,42 @@ export function offeneWachphase(alle, jetzt = new Date()) {
   return w.length ? w[w.length - 1] : null;
 }
 
+// Angeboten werden seit 0.3 nur diese; "unruhe" steckt in der Skala "ruhe".
 export const NEBENWIRKUNGEN = [
-  ["kopfschmerz", "Kopfschmerz"], ["herzklopfen", "Herzklopfen"], ["unruhe", "Unruhe"],
+  ["kopfschmerz", "Kopfschmerz"], ["herzklopfen", "Herzklopfen"],
   ["magen", "Magen"], ["reizbarkeit", "Reizbarkeit"],
 ];
+const NW_NAMEN = Object.fromEntries([...NEBENWIRKUNGEN, ["unruhe", "Unruhe"]]);
+export const STAERKEN = [[1, "leicht"], [2, "mittel"], [3, "stark"]];
+
+// Befinden "jetzt", alle Skalen 5 = gut
+export const BEFINDEN = [
+  ["fokus", "Fokus", "zerstreut", "voll da"],
+  ["energie", "Energie", "leer", "viel"],
+  ["stimmung", "Stimmung", "gedrückt", "gut"],
+  ["ruhe", "Innere Ruhe", "getrieben", "ruhig"],
+];
+
+export const GRUENDE = ["vergessen", "keine Mahlzeit", "bewusst", "Nebenwirkung"];
 
 export function beschreibe(e) {
   const d = e.daten || {};
   let s;
   switch (e.typ) {
     case "einnahme":
-      s = (d.mittel || `Mittel ${d.supplement_id}`) + (d.dosis ? ` ${d.dosis}` : "") +
+      s = (d.mittel || `Mittel ${d.supplement_id}`) +
+        (d.dosis_mg != null ? ` ${d.dosis_mg} mg` : d.dosis ? ` ${d.dosis}` : "") +
         (d.status === "ausgelassen" ? " · ausgelassen" : "") + (d.grund ? ` (${d.grund})` : "");
       break;
     case "wach": s = "Wach" + (d.bis ? ` bis ${d.bis.slice(11, 16)}` : " (läuft)") + (d.grund ? ` · ${d.grund}` : ""); break;
     case "nebenwirkung": {
-      const n = NEBENWIRKUNGEN.find(([k]) => k === d.art);
-      s = (d.art === "freitext" ? d.text : n ? n[1] : d.art) + (d.staerke ? ` · Stärke ${d.staerke}` : "");
+      s = (d.art === "freitext" ? d.text : NW_NAMEN[d.art] || d.art) +
+        (d.staerke ? ` · ${STAERKEN.find(([n]) => n === d.staerke)?.[1] || d.staerke}` : "");
       break;
     }
-    case "wirkung": s = `Fokus ${d.fokus}/5`; break;
+    case "wirkung":
+      s = BEFINDEN.filter(([k]) => d[k] != null).map(([k, name]) => `${name} ${d[k]}`).join(", ");
+      break;
     case "mahlzeit": s = d.richtig ? "Mahlzeit" : "Snack (keine richtige Mahlzeit)"; break;
     case "kaffee": s = "Kaffee" + (d.menge ? ` ×${d.menge}` : ""); break;
     case "alkohol": s = "Alkohol" + (d.menge ? ` ${d.menge} Gl.` : ""); break;
@@ -128,4 +144,103 @@ export function beschreibe(e) {
     default: s = e.typ;
   }
   return e.notiz ? `${s} · ${e.notiz}` : s;
+}
+
+// ------------------------------------------------------------ Tagesplan (0.3)
+
+/** Zeitfenster je Tageszeit für Supplemente (von, bis, plan). */
+export const TAGESZEITEN = {
+  morgens: { label: "Morgens", von: "05:00", bis: "11:00", plan: "07:30" },
+  mittags: { label: "Mittags", von: "11:00", bis: "15:00", plan: "12:30" },
+  abends: { label: "Abends", von: "17:00", bis: "23:30", plan: "19:00" },
+};
+const blockAus = (hhmm) => (hhmm < "11:00" ? "morgens" : hhmm < "16:00" ? "mittags" : "abends");
+const norm = (s) => (s || "").normalize("NFC").trim().toLowerCase();
+
+/**
+ * Tagesplan aus konfig.json: eine Zeile je Gabe. Medikamente mit Gaben aus
+ * "medikamente" (gaben.json), Supplemente aus "mittel" (Protokoll), Gabe =
+ * Tageszeit. Medikamente ohne Gaben landen in "weitere".
+ */
+export function tagesplan(konfig) {
+  if (!konfig) return [];
+  const meds = konfig.medikamente || [];
+  const istMed = (m) => meds.some((x) => (x.supplement_id && x.supplement_id === m.supplement_id) || norm(x.name) === norm(m.name));
+  const zeilen = [];
+  for (const m of meds) {
+    const basis = { name: m.name, supplement_id: m.supplement_id || null, medikament: true, dosis_optionen: m.dosis_optionen || [] };
+    if (!m.gaben?.length) { zeilen.push({ ...basis, key: `${norm(m.name)}|`, block: "weitere", gabe: null, label: "bei Bedarf" }); continue; }
+    for (const g of m.gaben) {
+      // Gabe ohne Zeiten: nicht raten, sondern unter "weitere"
+      const block = g.plan || g.von ? blockAus(g.plan || g.von) : "weitere";
+      zeilen.push({ ...basis, key: `${norm(m.name)}|${g.gabe}`, block, gabe: g.gabe,
+        label: g.label || g.gabe, von: g.von, bis: g.bis, plan: g.plan, dosis_mg: g.dosis_mg ?? null });
+    }
+  }
+  const gesehen = new Set(zeilen.map((z) => z.key));
+  for (const m of konfig.mittel || []) {
+    if (istMed(m)) continue;
+    const zp = norm(m.zeitpunkt);
+    if (!["morgens", "mittags", "abends", "nuechtern"].includes(zp)) {
+      // z. B. "bei Bedarf": keine feste Tageszeit, nicht im Sammelblatt
+      const key = `${norm(m.name)}|`;
+      if (!gesehen.has(key)) { gesehen.add(key); zeilen.push({ name: m.name, supplement_id: m.supplement_id, medikament: false,
+        dosis_optionen: [], key, block: "weitere", gabe: null, label: m.zeitpunkt || "bei Bedarf" }); }
+      continue;
+    }
+    const block = zp === "nuechtern" ? "morgens" : zp;
+    const t = TAGESZEITEN[block];
+    const key = `${norm(m.name)}|${block}`;
+    if (gesehen.has(key)) continue;          // dasselbe Mittel zweimal im Block: eine Zeile
+    gesehen.add(key);
+    zeilen.push({ name: m.name, supplement_id: m.supplement_id, medikament: false, dosis_optionen: [],
+      key, block, gabe: block, label: m.detail || t.label, von: t.von, bis: t.bis, plan: t.plan });
+  }
+  return zeilen;
+}
+
+/** Passt eine Einnahme zu einer Zeile des Tagesplans? */
+export function gehoertZu(ev, zeile) {
+  if (ev.typ !== "einnahme") return false;
+  const d = ev.daten || {};
+  const gleichesMittel = (zeile.supplement_id && d.supplement_id === zeile.supplement_id) || norm(d.mittel) === norm(zeile.name);
+  return gleichesMittel && (d.gabe || null) === (zeile.gabe || null);
+}
+
+/** Letzte wirksame Einnahme einer Zeile an einem Tag (Ortsdatum von zeit), oder null. */
+export function statusFuer(zeile, wirksameEreignisse, tag) {
+  const treffer = wirksameEreignisse.filter((e) => e.zeit.slice(0, 10) === tag && gehoertZu(e, zeile));
+  if (!treffer.length) return null;
+  return treffer.sort((a, b) => Date.parse(a.erfasst) - Date.parse(b.erfasst))[treffer.length - 1];
+}
+
+const hhmm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+
+/** Ortszeit eines Tages zu einer Uhrzeit "HH:MM" als Date. */
+export function amTag(tag, uhr) {
+  const [y, m, d] = tag.split("-").map(Number);
+  const [h, mi] = uhr.split(":").map(Number);
+  return new Date(y, m - 1, d, h, mi, 0);
+}
+
+/**
+ * Vorbelegung der Zeit beim Abhaken: im Zeitfenster "jetzt", sonst die
+ * Planzeit (wenn sie heute schon vorbei ist), markiert als geschätzt.
+ */
+export function vorbelegung(zeile, jetzt = new Date()) {
+  const t = hhmm(jetzt);
+  if (!zeile?.plan || !zeile.von || !zeile.bis || (t >= zeile.von && t <= zeile.bis)) return { art: "jetzt" };
+  const tag = isoLokal(jetzt).slice(0, 10);
+  const plan = amTag(tag, zeile.plan);
+  return plan <= jetzt ? { art: "plan", zeit: plan } : { art: "jetzt" };
+}
+
+/** Zuletzt genommene Dosis eines Medikaments (mg) über alle Tage, oder null. */
+// Je Gabe: Morgen- und Mittagsdosis eines Mittels können verschieden sein.
+export function letzteDosis(name, supplementId, wirksameEreignisse, gabe = null) {
+  const t = wirksameEreignisse.filter((e) => e.typ === "einnahme" && e.daten?.status === "genommen" &&
+    e.daten?.dosis_mg != null && (e.daten.gabe || null) === (gabe || null) &&
+    ((supplementId && e.daten.supplement_id === supplementId) || norm(e.daten.mittel) === norm(name)));
+  if (!t.length) return null;
+  return t.sort((a, b) => Date.parse(a.zeit) - Date.parse(b.zeit))[t.length - 1].daten.dosis_mg;
 }

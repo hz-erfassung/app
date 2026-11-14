@@ -1,6 +1,6 @@
 # Hanna Erfassung: Stand
 
-PWA zum Erfassen von Einnahmen, Wachphasen, Nebenwirkungen, Fokus, Essen und Trinken, Blutdruck und Notizen am iPhone. Offline, Upload ins Business-OneDrive über Microsoft Graph. Auftrag: `AI_Projekte/bereiche/gesundheit/handoff/2026-11-14_Hanna_Auftrag-Kai_Hanna-App.md`; Format: `AI_Projekte/bereiche/gesundheit/erfassung/LOGFORMAT.md`. Etappe 1b, 14.11.2026.
+PWA zum Erfassen von Einnahmen, Wachphasen, Nebenwirkungen, Fokus, Essen und Trinken, Blutdruck und Notizen am iPhone. Offline, Upload ins Business-OneDrive über Microsoft Graph. Auftrag: `AI_Projekte/bereiche/gesundheit/handoff/2026-11-14_Hanna_Auftrag-Kai_Hanna-App.md`; Format: `AI_Projekte/bereiche/gesundheit/erfassung/LOGFORMAT.md`. Fassung 0.3.0 (UX-Etappe A), 14.11.2026.
 
 ## Aufbau
 
@@ -26,7 +26,15 @@ py dev_server.py --wurzel %TEMP%\hanna_test_onedrive --port 8790
 
 Vorschau in Claude Code: `hanna-erfassung` in `AI_Projekte/.claude/launch.json`.
 
-Durchgespielt am 14.11. (Testmodus, Browser 375 px): Mittel aus `konfig.json` laden, Einnahme, Wachphase starten und beenden, Fokus, Nebenwirkung mit Rückgängig, Kaffee, Blutdruck-Dialog, Ändern über die Tagesliste, Server aus (App lädt aus dem Service Worker, Erfassen geht, „offen“), Server an (nachgeladen). Die hochgeladene Datei lief durch `erfassung_import.py` auf einer Kopie von `hanna.db`: 8 Zeilen, 0 ungültig, Einnahme und Aufwachzeit richtig abgeleitet.
+## Bedienung (0.3)
+
+- Reiter unten: **Heute** (Checkliste nach Tageszeit), **Erfassen** (Befinden, Nebenwirkung, Essen und Trinken, Blutdruck, Notiz), **Nacht** (Wach / Wieder schlafen), **Verlauf** (Tagesliste, Konto, Gerät, Sicherung).
+- Einnahmen speichern nur im Blatt: Genommen oder Ausgelassen mit Grund. Medikamente mit Dosis je Gabe und Dosisknöpfen (Vorbelegung: zuletzt genommene Dosis derselben Gabe, Hinweis bei Abweichung vom Plan). Zeitvorbelegung im Zeitfenster „jetzt“, sonst Planzeit, als geschätzt markiert (`~`).
+- Sammelknopf je Tageszeit nur für Supplemente. Befinden mit vier Skalen, alle 5 = gut. Essen und Trinken mit einem Tipp, danach „Zeit ändern“ oder „Rückgängig“.
+- Doppeltipps speichern nur einmal; ein Tipp in den Rand des Blatts verwirft nichts.
+- Medikamente und ihre Gaben kommen aus `konfig.json` (im OneDrive, erzeugt aus `gaben.json` und dem Protokoll); im Code stehen keine Namen.
+
+Durchgespielt am 14.11. (Testmodus, Browser 375 px): Checkliste, Planzeit, Sammelblatt mit Abwahl, Dosis je Gabe, Ausgelassen mit Grund, Befinden mit Pflichtprüfung, Nebenwirkung mit Stärke, Kaffee mit Zeit ändern, Blutdruck-Prüfung, Wachphase, Doppeltipps, Abgleich. 15 hochgeladene Zeilen bestehen die Prüfung von `erfassung_import.py`; ein Lauf auf einer Kopie von `hanna.db` leitete richtig ab.
 
 ## Betrieb
 
@@ -44,5 +52,7 @@ Durchgespielt am 14.11. (Testmodus, Browser 375 px): Mittel aus `konfig.json` la
 - Graph legt fehlende Ordner beim Hochladen per Pfad an; im echten OneDrive noch nicht gesehen. Gelesen wird über `@microsoft.graph.downloadUrl` (der Testserver spielt die Weiterleitung von `:/content` nach).
 - Nicht hochgeladene Einträge liegen nur auf dem Gerät. Vor dem Löschen oder Neuinstallieren muss „✓“ stehen. Notweg: „Offene sichern“ gibt eine Datei im Logformat weiter; am Laptop nach `erfassung/eingang/sicherung/` legen, der Import überspringt bekannte Einträge.
 - `Files.ReadWrite` erlaubt der App das ganze OneDrive. Enger geht es nur mit einem anderen Ablageort (App-Ordner), dann müsste der Import dort lesen.
-- Die Mittel-Knöpfe schreiben keine Dosis: die Protokolldosis passt nicht immer zur einzelnen Gabe (ein Mittel mit zwei Gaben am Tag). Dosis bei Bedarf über „Ändern“.
-- Protokollanzeige und Tageszusammenfassung in der App: Etappe 2.
+- Supplemente tragen keine Dosis; Medikamente schon (je Gabe).
+- Einnahmen aus 0.2.x (ohne `gabe`) zählen in „Heute“ nicht als erledigt; für den Import gültig.
+- Nach jedem Abgleich wird „Heute“ neu gezeichnet; ein Tipp genau in diesem Augenblick kann verloren gehen (Eingaben im Blatt nie).
+- Etappe B: Abendrückblick, Morgenkarte „Letzte Nacht“, Gaben-Tabelle in `hanna.db`, Tagesgrenze 04:00. Etappe C: Nachtmodus, Wochenübersicht.

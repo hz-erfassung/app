@@ -56,3 +56,58 @@ test("offene Wachphase nur ohne bis und jünger als 14 h", () => {
   assert.equal(offeneWachphase([w, zu], jetzt), null);
   assert.equal(offeneWachphase([w], new Date("2030-01-10T17:00:00+01:00")), null);
 });
+
+// ---- 0.3: Tagesplan, Status, Vorbelegung
+import { tagesplan, statusFuer, vorbelegung, letzteDosis, gehoertZu } from "../docs/format.js";
+
+const konfig = {
+  mittel: [
+    { supplement_id: 502, name: "Supplement D", zeitpunkt: "morgens", detail: "zum Frühstück" },
+    { supplement_id: 501, name: "Medikament A", zeitpunkt: "morgens" },
+    { supplement_id: 503, name: "Supplement C", zeitpunkt: "abends" },
+  ],
+  medikamente: [
+    { name: "Medikament A", supplement_id: 501, dosis_optionen: [5, 10], gaben: [
+      { gabe: "morgens", label: "Morgens", von: "05:30", bis: "10:30", plan: "07:15", dosis_mg: 10 },
+      { gabe: "mittags", label: "Mittags", von: "11:00", bis: "15:00", plan: "12:30", dosis_mg: 5 }] },
+    { name: "Medikament B", supplement_id: null, dosis_optionen: [10, 20, 30], gaben: [] },
+  ],
+};
+
+test("tagesplan: Medikamente je Gabe, Supplemente je Tageszeit, keine Doppel", () => {
+  const p = tagesplan(konfig);
+  assert.deepEqual(p.map((z) => [z.name, z.block, z.gabe]), [
+    ["Medikament A", "morgens", "morgens"], ["Medikament A", "mittags", "mittags"],
+    ["Medikament B", "weitere", null], ["Supplement D", "morgens", "morgens"], ["Supplement C", "abends", "abends"]]);
+  assert.equal(p[0].medikament, true);
+  assert.equal(p[3].medikament, false);
+  assert.deepEqual(tagesplan(null), []);
+});
+
+test("statusFuer: passende Gabe am Tag, letzte Fassung zählt", () => {
+  const [hcMorgen, hcMittag] = tagesplan(konfig);
+  const e1 = ev("EEEEEEEE1", "2030-01-10T07:20:00+01:00", { typ: "einnahme",
+    daten: { mittel: "Medikament A", supplement_id: 501, gabe: "morgens", status: "genommen", dosis_mg: 10 } });
+  assert.equal(statusFuer(hcMorgen, [e1], "2030-01-10").id, e1.id);
+  assert.equal(statusFuer(hcMittag, [e1], "2030-01-10"), null);
+  assert.equal(statusFuer(hcMorgen, [e1], "2030-01-11"), null);
+  const alt = ev("EEEEEEEE2", "2030-01-10T07:20:00+01:00", { typ: "einnahme", daten: { mittel: "Medikament A", status: "genommen" } });
+  assert.equal(gehoertZu(alt, hcMorgen), false);                 // ohne gabe (0.2) nicht zugeordnet
+  assert.equal(letzteDosis("Medikament A", 501, [e1], "morgens"), 10);
+});
+
+test("vorbelegung: im Fenster jetzt, danach Planzeit, davor jetzt", () => {
+  const [hcMorgen] = tagesplan(konfig);
+  assert.deepEqual(vorbelegung(hcMorgen, new Date(2030, 0, 10, 8, 0)), { art: "jetzt" });
+  const v = vorbelegung(hcMorgen, new Date(2030, 0, 10, 21, 0));
+  assert.equal(v.art, "plan");
+  assert.equal(v.zeit.getHours() * 60 + v.zeit.getMinutes(), 7 * 60 + 15);
+  assert.deepEqual(vorbelegung(hcMorgen, new Date(2030, 0, 10, 4, 0)), { art: "jetzt" });
+});
+
+test("letzteDosis je Gabe (Morgen 10 mg beeinflusst Mittag nicht)", () => {
+  const m = ev("EEEEEEEE3", "2030-01-10T07:20:00+01:00", { typ: "einnahme",
+    daten: { mittel: "Medikament A", supplement_id: 501, gabe: "morgens", status: "genommen", dosis_mg: 10 } });
+  assert.equal(letzteDosis("Medikament A", 501, [m], "mittags"), null);
+  assert.equal(letzteDosis("Medikament A", 501, [m], "morgens"), 10);
+});

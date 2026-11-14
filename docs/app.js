@@ -1,16 +1,19 @@
-// Hanna Erfassung: Ereignisse mit einem Tipp erfassen, offline speichern,
-// später nach OneDrive hochladen. Format: LOGFORMAT.md im Bereich Gesundheit.
+// Hanna Erfassung 0.3: Checkliste nach Tageszeit, Blätter statt Sofort-Speichern
+// bei Einnahmen, Befinden mit vier Skalen. Format: LOGFORMAT.md im Bereich Gesundheit.
 
-import { neuesEreignis, isoLokal, wirksam, offeneWachphase, beschreibe, zeile, NEBENWIRKUNGEN, GERAET_MUSTER } from "./format.js";
+import {
+  neuesEreignis, isoLokal, wirksam, offeneWachphase, beschreibe, zeile as logzeile,
+  NEBENWIRKUNGEN, STAERKEN, BEFINDEN, GRUENDE, GERAET_MUSTER,
+  tagesplan, statusFuer, gehoertZu, vorbelegung, letzteDosis, amTag, TAGESZEITEN,
+} from "./format.js";
 import { alleEreignisse, speichere, lies, schreibe } from "./speicher.js";
 import { anmelden, abmelden, rueckkehrVerarbeiten, token, eingerichtet } from "./anmeldung.js";
 import { hochladen, ladeKonfig } from "./abgleich.js";
 import { TESTMODUS } from "./konfig.js";
 
-const VERSION = "0.2.2";
+const VERSION = "0.3.0";
 const $ = (id) => document.getElementById(id);
-
-const zustand = { alle: [], konfig: null, geraet: "iphone", tag: null, sync: { art: "", text: "" }, laeuft: false };
+const zustand = { alle: [], konfig: null, geraet: "iphone", tag: null, reiter: "heute", sync: { art: "" }, laeuft: false };
 
 function el(tag, attrs = {}, ...kinder) {
   const e = document.createElement(tag);
@@ -19,45 +22,26 @@ function el(tag, attrs = {}, ...kinder) {
     else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
     else if (v !== undefined && v !== null && v !== false) e.setAttribute(k, v === true ? "" : v);
   }
-  for (const k of kinder.flat()) if (k != null) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  for (const k of kinder.flat()) if (k != null && k !== false) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
   return e;
 }
-
 const heute = () => isoLokal(new Date()).slice(0, 10);
 const uhr = (iso) => iso.slice(11, 16);
+const geschaetzt = (e) => !!e?.daten?.zeit_geschaetzt;
+const zeitText = (e) => (geschaetzt(e) ? "~" : "") + uhr(e.zeit);
 
-// ------------------------------------------------------------ Erfassen
+// ------------------------------------------------------------ Speichern
 
-async function erfasse(typ, daten = {}, { zeit, ersetzt = null, notiz = "", leise = false } = {}) {
+async function erfasse(typ, daten = {}, { zeit, ersetzt = null, notiz = "" } = {}) {
   const ev = neuesEreignis({ typ, daten, zeit, ersetzt, notiz, geraet: zustand.geraet });
   ev._sync = 0;
   await speichere(ev);
   zustand.alle.push(ev);
   zeichne();
-  if (!leise) toast(ev);
-  bald_abgleichen();
+  baldAbgleichen();
   return ev;
 }
-
-const storniere = (ev) => erfasse("storno", {}, { ersetzt: ev.id, leise: true });
-
-let toastUhr = null;
-function toast(ev) {
-  $("toasttext").textContent = `${uhr(ev.zeit)} ${beschreibe(ev)}`;
-  $("toast").hidden = false;
-  $("toastrueck").onclick = async () => { $("toast").hidden = true; await storniere(aktuelleFassung(ev)); };
-  $("toastaendern").onclick = () => { $("toast").hidden = true; oeffneDialog(ev.typ, aktuelleFassung(ev)); };
-  // Einnahme ausgelassen: zweiter Tipp direkt im Hinweis statt über den Dialog
-  const ausl = ev.typ === "einnahme" && ev.daten.status === "genommen";
-  $("toastausgelassen").hidden = !ausl;
-  $("toastausgelassen").onclick = async () => {
-    $("toast").hidden = true;
-    const a = aktuelleFassung(ev);
-    await erfasse("einnahme", { ...a.daten, status: "ausgelassen" }, { zeit: a.zeit, ersetzt: a.id, notiz: a.notiz });
-  };
-  clearTimeout(toastUhr);
-  toastUhr = setTimeout(() => { $("toast").hidden = true; }, 6000);
-}
+const storniere = (ev) => erfasse("storno", {}, { ersetzt: ev.id });
 
 /** Die heute gültige Fassung eines Ereignisses (falls es inzwischen ersetzt wurde). */
 function aktuelleFassung(ev) {
@@ -70,150 +54,472 @@ function aktuelleFassung(ev) {
   return jetzt;
 }
 
-// ------------------------------------------------------------ Dialog
+let toastUhr = null;
+function toast(text, { aendern = null, rueck = null, aendernText = "Ändern" } = {}) {
+  $("toasttext").textContent = text;
+  $("toast").hidden = false;
+  $("toastaendern").hidden = !aendern;
+  $("toastaendern").textContent = aendernText;
+  $("toastaendern").onclick = () => { $("toast").hidden = true; aendern(); };
+  $("toastrueck").hidden = !rueck;
+  $("toastrueck").onclick = async () => { $("toast").hidden = true; await rueck(); };
+  clearTimeout(toastUhr);
+  toastUhr = setTimeout(() => { $("toast").hidden = true; }, 10000);
+}
+const toastFuer = (ev) => toast(`${zeitText(ev)} ${beschreibe(ev)}`, {
+  aendern: () => bearbeite(aktuelleFassung(ev)),
+  rueck: () => storniere(aktuelleFassung(ev)),
+});
 
-const FELDER = {
-  einnahme: [["mittel", "Mittel", "text"], ["dosis", "Dosis", "text"],
-    ["status", "Status", "select", [["genommen", "genommen"], ["ausgelassen", "ausgelassen"]]], ["grund", "Grund", "text"]],
-  wach: [["bis", "Wach bis (leer = läuft noch)", "datetime-local"], ["grund", "Grund", "text"]],
-  nebenwirkung: [["art", "Art", "select", [...NEBENWIRKUNGEN, ["freitext", "Andere (Text)"]]], ["text", "Text bei „Andere“", "text"],
-    ["staerke", "Stärke", "select", [["", "–"], ["1", "1 leicht"], ["2", "2 mittel"], ["3", "3 stark"]]]],
-  wirkung: [["fokus", "Fokus", "select", [1, 2, 3, 4, 5].map((n) => [String(n), `${n}`])]],
-  mahlzeit: [["richtig", "Richtige Mahlzeit", "select", [["true", "ja"], ["false", "nein, Snack"]]], ["art", "Was", "text"]],
-  kaffee: [["menge", "Menge (Tassen)", "number"]],
-  alkohol: [["menge", "Menge (Gläser)", "number"]],
-  blutdruck: [["sys", "Systolisch", "number"], ["dia", "Diastolisch", "number"], ["puls", "Puls", "number"]],
-  notiz: [],
-};
-const TITEL = { einnahme: "Einnahme", wach: "Wachphase", nebenwirkung: "Nebenwirkung", wirkung: "Fokus",
-  mahlzeit: "Mahlzeit", kaffee: "Kaffee", alkohol: "Alkohol", blutdruck: "Blutdruck und Puls", notiz: "Notiz" };
+// ------------------------------------------------------------ Blatt
 
-const zuEingabe = (iso) => { const d = new Date(iso); return isoLokal(d).slice(0, 16); };
-const ausEingabe = (v) => isoLokal(new Date(v));
+function oeffneBlatt({ titel, untertitel = "", inhalt = [], knoepfe = [] }) {
+  $("btitel").textContent = titel;
+  $("buntertitel").textContent = untertitel;
+  $("buntertitel").hidden = !untertitel;
+  $("binhalt").replaceChildren(...inhalt);
+  // Doppeltipp-Schutz: solange eine Aktion läuft, sind alle Knöpfe des Blatts gesperrt
+  let beschaeftigt = false;
+  const knopfListe = knoepfe.map((k) => el("button", {
+    type: "button", class: k.klasse || "", onclick: async () => {
+      if (beschaeftigt) return;
+      beschaeftigt = true;
+      knopfListe.forEach((b) => { b.disabled = true; });
+      try { await k.aktion(); } catch (f) { fehler(f.message); }
+      finally { beschaeftigt = false; knopfListe.forEach((b) => { b.disabled = false; }); }
+    },
+  }, k.text));
+  $("bknoepfe").replaceChildren(...knopfListe);
+  const d = $("blatt");
+  if (!d.open) d.showModal();
+}
+function schliesseBlatt() { const d = $("blatt"); if (d.open) d.close(); }
+function fehler(text) {
+  let f = $("binhalt").querySelector(".fehlertext");
+  if (!f) { f = el("p", { class: "fehlertext", role: "alert" }); $("binhalt").append(f); }
+  f.textContent = text;
+}
+const feld = (titel, ...inhalt) => el("div", { class: "feld" }, titel ? el("span", { class: "titel" }, titel) : null, ...inhalt);
 
-function oeffneDialog(typ, alt = null, vorgabe = {}) {
-  const daten = { ...(alt ? alt.daten : {}), ...vorgabe };
-  $("dtitel").textContent = (alt ? "Ändern: " : "Neu: ") + TITEL[typ];
-  const f = $("dfelder");
-  f.replaceChildren();
-  f.append(el("label", { for: "f_zeit" }, "Zeitpunkt"),
-    el("input", { id: "f_zeit", type: "datetime-local", required: true,
-      value: zuEingabe(alt ? alt.zeit : isoLokal(new Date())) }));
-  for (const [k, label, art, optionen] of FELDER[typ]) {
-    f.append(el("label", { for: `f_${k}` }, label));
-    let wert = daten[k];
-    if (art === "datetime-local" && wert) wert = zuEingabe(wert);
-    if (art === "select") {
-      f.append(el("select", { id: `f_${k}` }, optionen.map(([v, t]) =>
-        el("option", { value: v, selected: String(wert ?? "") === v }, t))));
-    } else {
-      // Zahlen als Text mit Dezimaltastatur: type=number verschluckt in Safari "0,5"
-      f.append(el("input", { id: `f_${k}`, type: art === "number" ? "text" : art, value: wert ?? "",
-        inputmode: art === "number" ? "decimal" : undefined }));
-    }
-  }
-  f.append(el("label", { for: "f_notiz" }, typ === "notiz" ? "Text" : "Notiz"),
-    el("textarea", { id: "f_notiz", rows: 2 }, alt ? alt.notiz || "" : ""));
-  $("dloeschen").hidden = !alt;
-  $("dloeschen").onclick = async () => { $("dialog").close(); await storniere(alt); };
-  $("dabbrechen").onclick = () => $("dialog").close();
-  $("formular").onsubmit = async (ereignis) => {
-    ereignis.preventDefault();
-    try {
-      const { daten: neu, zeit, notiz } = leseDialog(typ, alt);
-      $("dialog").close();
-      await erfasse(typ, neu, { zeit, notiz, ersetzt: alt ? alt.id : null });
-    } catch (fehler) { alert(fehler.message); }
-  };
-  $("dialog").showModal();
+/** Auswahl-Chips: genau einer oder (abwaehlbar) keiner. */
+function chips(optionen, { wert = null, abwaehlbar = false, klasse = "chips", beiWahl = null } = {}) {
+  let aktuell = wert;
+  const knoepfe = optionen.map(([v, text]) => el("button", {
+    type: "button", class: "chip", "aria-pressed": String(v === aktuell),
+    onclick: () => {
+      aktuell = abwaehlbar && aktuell === v ? null : v;
+      knoepfe.forEach((b, i) => b.setAttribute("aria-pressed", String(optionen[i][0] === aktuell)));
+      beiWahl?.(aktuell);
+    },
+  }, text));
+  return { node: el("div", { class: klasse }, knoepfe), wert: () => aktuell };
 }
 
-// Unveränderte Zeiten behalten ihren ursprünglichen Text samt Zeitzone. Sonst
-// würde z. B. 02:30+01:00 aus der doppelten Stunde der Winterzeit-Umstellung
-// beim Ändern still zu 02:30+02:00.
-const zeitAus = (eingabe, alt) => (alt && eingabe === zuEingabe(alt) ? alt : ausEingabe(eingabe));
-
-function leseDialog(typ, altEv = null) {
-  const w = (k) => { const e = $(`f_${k}`); return e ? e.value.trim() : ""; };
-  const zahl = (k, lo, hi, ganz = true) => {
-    if (w(k) === "") return undefined;
-    const n = Number(w(k).replace(",", "."));
-    if (!Number.isFinite(n) || n < lo || n > hi || (ganz && !Number.isInteger(n))) throw new Error(`${k}: ${lo} bis ${hi}`);
-    return n;
+/**
+ * Zeitwahl: Jetzt, vor 15/30/60 Minuten, Planzeit, Uhrzeit. Liefert die Zeit
+ * mit Zeitzone und ob sie geschätzt ist. Beim Ändern bleibt eine unveränderte
+ * Zeit samt Zeitzone und Merker erhalten.
+ */
+function zeitwahl({ vorgabe = { art: "jetzt" }, plan = null, alt = null } = {}) {
+  const zuEingabe = (d) => isoLokal(d).slice(0, 16);
+  const altHeute = !alt || isoLokal(new Date(alt.zeit)).slice(0, 10) === heute();
+  const optionen = altHeute ? [["jetzt", "Jetzt"], [-15, "−15"], [-30, "−30"], [-60, "−60"]] : [];
+  if (plan && altHeute) optionen.push(["plan", `Plan ${String(plan.getHours()).padStart(2, "0")}:${String(plan.getMinutes()).padStart(2, "0")}`]);
+  optionen.push(["uhr", "Uhrzeit…"]);
+  const start = alt ? "uhr" : vorgabe.art === "plan" && plan ? "plan" : "jetzt";
+  const eingabe = el("input", { type: "datetime-local", "aria-label": "Uhrzeit",
+    value: zuEingabe(alt ? new Date(alt.zeit) : vorgabe.zeit || new Date()) });
+  const anzeige = el("div", { class: "zeitanzeige" });
+  const c = chips(optionen, { wert: start, beiWahl: () => aktualisiere() });
+  const wert = () => {
+    const w = c.wert();
+    if (w === "jetzt") return { zeit: isoLokal(new Date()), geschaetzt: false };
+    if (typeof w === "number") return { zeit: isoLokal(new Date(Date.now() + w * 60e3)), geschaetzt: true };
+    if (w === "plan") return { zeit: isoLokal(plan), geschaetzt: true };
+    if (alt && eingabe.value.slice(0, 16) === zuEingabe(new Date(alt.zeit))) return { zeit: alt.zeit, geschaetzt: geschaetzt(alt) };
+    if (!eingabe.value) throw new Error("Uhrzeit fehlt.");
+    return { zeit: isoLokal(new Date(eingabe.value)), geschaetzt: true };
   };
-  if (!w("zeit")) throw new Error("Zeitpunkt fehlt");
-  const zeit = zeitAus(w("zeit"), altEv?.zeit);
-  if (Date.parse(zeit) > Date.now() + 10 * 60e3) throw new Error("Zeitpunkt liegt in der Zukunft");
-  const notiz = w("notiz");
-  const d = {};
-  switch (typ) {
-    case "einnahme": {
-      if (!w("mittel")) throw new Error("Mittel fehlt");
-      d.mittel = w("mittel");
-      const m = (zustand.konfig?.mittel || []).find((x) => x.name.toLowerCase() === d.mittel.toLowerCase());
-      if (m) d.supplement_id = m.supplement_id;
-      if (w("dosis")) d.dosis = w("dosis");
-      d.status = w("status");
-      if (w("grund")) d.grund = w("grund");
-      break;
-    }
-    case "wach":
-      if (w("bis")) {
-        d.bis = zeitAus(w("bis"), altEv?.daten?.bis);
-        if (Date.parse(d.bis) < Date.parse(zeit)) throw new Error("„bis“ liegt vor dem Beginn");
-      }
-      if (w("grund")) d.grund = w("grund");
-      break;
-    case "nebenwirkung":
-      d.art = w("art");
-      if (d.art === "freitext") { if (!w("text")) throw new Error("Text fehlt"); d.text = w("text"); }
-      if (w("staerke")) d.staerke = Number(w("staerke"));
-      break;
-    case "wirkung": d.fokus = Number(w("fokus")); break;
-    case "mahlzeit": d.richtig = w("richtig") === "true"; if (w("art")) d.art = w("art"); break;
-    case "kaffee": case "alkohol": { const m = zahl("menge", 0.01, 50, false); if (m !== undefined) d.menge = m; break; }
-    case "blutdruck": {
-      const sys = zahl("sys", 60, 260), dia = zahl("dia", 30, 160), puls = zahl("puls", 25, 220);
-      if ((sys === undefined) !== (dia === undefined)) throw new Error("Systolisch und diastolisch zusammen angeben");
-      if (sys !== undefined) { if (dia >= sys) throw new Error("Diastolisch muss kleiner sein"); d.sys = sys; d.dia = dia; }
-      if (puls !== undefined) d.puls = puls;
-      if (sys === undefined && puls === undefined) throw new Error("Blutdruck oder Puls angeben");
-      break;
-    }
-    case "notiz": if (!notiz) throw new Error("Text fehlt"); break;
+  const aktualisiere = () => {
+    eingabe.hidden = c.wert() !== "uhr";
+    try {
+      const w = wert();
+      if (Date.parse(w.zeit) > Date.now() + 10 * 60e3) { anzeige.textContent = "Liegt in der Zukunft"; return; }
+      const d = new Date(w.zeit);
+      const tag = isoLokal(d).slice(0, 10) === heute() ? "heute" : d.toLocaleDateString("de-CH", { day: "numeric", month: "numeric" });
+      anzeige.textContent = `${tag} ${uhr(isoLokal(d))}${w.geschaetzt ? " · geschätzt" : ""}`;
+    } catch { anzeige.textContent = ""; }
+  };
+  eingabe.addEventListener("input", aktualisiere);
+  aktualisiere();
+  return {
+    node: feld("Wann", c.node, eingabe, anzeige),
+    wert: () => {
+      const w = wert();
+      if (Date.parse(w.zeit) > Date.now() + 10 * 60e3) throw new Error("Der Zeitpunkt liegt in der Zukunft.");
+      return w;
+    },
+  };
+}
+
+const mitZeit = (daten, w) => (w.geschaetzt ? { ...daten, zeit_geschaetzt: true } : daten);
+const notizFeld = (wert = "", titel = "Notiz") => {
+  const t = el("textarea", { rows: 2, "aria-label": titel });
+  t.value = wert;
+  return { node: feld(titel, t), wert: () => t.value.trim() };
+};
+
+// ------------------------------------------------------------ Einnahme
+
+const planZeile = (e) => tagesplan(zustand.konfig).find((z) => gehoertZu(e, z)) || null;
+
+/**
+ * Blatt für eine Einnahme. zeile = Zeile des Tagesplans (oder null für ein
+ * anderes Mittel), alt = bestehendes Ereignis beim Ändern.
+ */
+function einnahmeBlatt(zeile, alt = null) {
+  const wirk = wirksam(zustand.alle);
+  const d0 = alt?.daten || {};
+  const inhalt = [];
+  let nameEingabe = null, dosisText = null, dosis = null, dosisAndere = null;
+
+  if (!zeile) {
+    nameEingabe = el("input", { type: "text", "aria-label": "Mittel", autocomplete: "off", value: d0.mittel || "" });
+    dosisText = el("input", { type: "text", "aria-label": "Dosis", value: d0.dosis || "", placeholder: "z. B. 2 Kapseln" });
+    inhalt.push(feld("Mittel", nameEingabe), feld("Dosis (optional)", dosisText));
+  } else if (zeile.medikament) {
+    const vorschlag = d0.dosis_mg ?? letzteDosis(zeile.name, zeile.supplement_id, wirk, zeile.gabe) ?? zeile.dosis_mg ?? null;
+    const optionen = [...new Set([...(zeile.dosis_optionen || []), ...(vorschlag != null ? [vorschlag] : [])])]
+      .sort((a, b) => a - b).map((n) => [n, `${n} mg`]);
+    optionen.push(["andere", "andere"]);
+    dosisAndere = el("input", { type: "text", inputmode: "decimal", "aria-label": "Dosis in mg", hidden: true });
+    dosis = chips(optionen, { wert: vorschlag, beiWahl: (w) => { dosisAndere.hidden = w !== "andere"; } });
+    const hinweis = zeile.dosis_mg != null && vorschlag != null && vorschlag !== zeile.dosis_mg
+      ? el("div", { class: "zeitanzeige" }, `Plan: ${zeile.dosis_mg} mg`) : null;
+    inhalt.push(feld("Dosis", dosis.node, dosisAndere, hinweis));
   }
-  return { daten: d, zeit, notiz };
+
+  const plan = zeile?.plan ? amTag(heute(), zeile.plan) : null;
+  const vb = zeile ? vorbelegung(zeile) : { art: "jetzt" };
+  const zw = zeitwahl({ vorgabe: vb, plan: plan && plan <= new Date() ? plan : null, alt });
+  const nz = notizFeld(alt?.notiz || "");
+  inhalt.push(zw.node, nz.node);
+
+  const sammle = (status, grund = null) => {
+    const w = zw.wert();
+    const daten = { status };
+    if (zeile) {
+      daten.mittel = zeile.name;
+      if (zeile.supplement_id) daten.supplement_id = zeile.supplement_id;
+      if (zeile.gabe) daten.gabe = zeile.gabe;
+    } else {
+      const name = nameEingabe.value.trim();
+      if (!name) throw new Error("Welches Mittel?");
+      daten.mittel = name;
+      const bekannt = tagesplan(zustand.konfig).find((z) => z.name.toLowerCase() === name.toLowerCase());
+      if (bekannt?.supplement_id) daten.supplement_id = bekannt.supplement_id;
+      if (dosisText.value.trim()) daten.dosis = dosisText.value.trim();
+    }
+    if (dosis) {
+      let mg = dosis.wert();
+      if (mg === "andere") {
+        const roh = dosisAndere.value.trim();
+        if (!roh && status === "ausgelassen") mg = null;
+        else {
+          mg = Number(roh.replace(",", "."));
+          if (!Number.isFinite(mg) || mg < 0.01 || mg > 5000) throw new Error("Dosis in mg angeben (0,01 bis 5000).");
+        }
+      }
+      if (mg == null && status === "genommen") throw new Error("Welche Dosis?");
+      if (mg != null) daten.dosis_mg = mg;
+    }
+    if (grund) daten.grund = grund;
+    return { daten: mitZeit(daten, w), zeit: w.zeit, notiz: nz.wert() };
+  };
+  const speichern = async (status, grund = null) => {
+    const s = sammle(status, grund);
+    const gespeichert = await erfasse("einnahme", s.daten, { zeit: s.zeit, notiz: s.notiz, ersetzt: alt?.id || null });
+    schliesseBlatt();
+    toastFuer(gespeichert);
+  };
+
+  const titel = zeile ? zeile.name : alt ? "Einnahme ändern" : "Anderes Mittel";
+  const untertitel = zeile ? [zeile.label, zeile.block !== "weitere" ? TAGESZEITEN[zeile.block]?.label : null]
+    .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" · ") : "";
+  const hauptKnoepfe = [
+    { text: "Genommen", klasse: "haupt", aktion: () => speichern("genommen") },
+    { text: "Ausgelassen", aktion: () => grundSchritt() },
+    ...(alt ? [{ text: "Löschen", klasse: "warn", aktion: async () => { await storniere(alt); schliesseBlatt(); } }] : []),
+    { text: "Abbrechen", klasse: "leicht" + (alt ? "" : " voll"), aktion: schliesseBlatt },
+  ];
+  const grundSchritt = () => {
+    sammle("ausgelassen");                       // früh prüfen (Name, Zeit)
+    const g = chips(GRUENDE.map((x) => [x, x]), { wert: d0.status === "ausgelassen" ? d0.grund ?? null : null, abwaehlbar: true });
+    oeffneBlatt({ titel, untertitel: "Ausgelassen: warum?", inhalt: [...inhalt, feld("Grund", g.node)], knoepfe: [
+      { text: "Ausgelassen speichern", klasse: "haupt", aktion: () => speichern("ausgelassen", g.wert()) },
+      { text: "Zurück", aktion: () => oeffneBlatt({ titel, untertitel, inhalt, knoepfe: hauptKnoepfe }) },
+    ] });
+  };
+  oeffneBlatt({ titel, untertitel, inhalt, knoepfe: hauptKnoepfe });
+}
+
+function sammelBlatt(block, zeilen) {
+  const haken = zeilen.map((z) => ({ z, box: el("input", { type: "checkbox", checked: true, "aria-label": z.name }) }));
+  const liste = el("div", {}, haken.map(({ z, box }) => el("label", { class: "auswahl" }, box, z.name)));
+  const plan = amTag(heute(), TAGESZEITEN[block].plan);
+  const zw = zeitwahl({ vorgabe: vorbelegung(zeilen[0]), plan: plan <= new Date() ? plan : null });
+  oeffneBlatt({ titel: `${TAGESZEITEN[block].label}: Supplemente`, untertitel: "Abgewählte bleiben offen", inhalt: [feld("Genommen", liste), zw.node],
+    knoepfe: [
+      { text: "Genommen speichern", klasse: "haupt", aktion: async () => {
+        const w = zw.wert();
+        const gewaehlt = haken.filter((h) => h.box.checked).map((h) => h.z);
+        if (!gewaehlt.length) throw new Error("Nichts ausgewählt.");
+        const neu = [];
+        for (const h of haken.filter((x) => x.box.checked)) {
+          neu.push(await erfasse("einnahme", mitZeit({ mittel: h.z.name, supplement_id: h.z.supplement_id, gabe: h.z.gabe, status: "genommen" }, w), { zeit: w.zeit }));
+          h.box.checked = false;               // schon gespeichert: bei einem Fehler nicht doppelt
+        }
+        schliesseBlatt();
+        toast(`${neu.length} Supplemente abgehakt`, { rueck: async () => { for (const e of neu) await storniere(aktuelleFassung(e)); } });
+      } },
+      { text: "Abbrechen", klasse: "leicht", aktion: schliesseBlatt },
+    ] });
+}
+
+// ------------------------------------------------------------ Weitere Blätter
+
+function befindenBlatt(alt = null) {
+  const d0 = alt?.daten || {};
+  const skalen = BEFINDEN.map(([k, name, links, rechts]) => {
+    const c = chips([1, 2, 3, 4, 5].map((n) => [n, String(n)]), { wert: d0[k] ?? null, abwaehlbar: true, klasse: "skala" });
+    c.node.setAttribute("role", "group");
+    c.node.setAttribute("aria-label", `${name}, 1 ${links} bis 5 ${rechts}`);
+    return { k, node: feld(name, c.node, el("div", { class: "anker" }, el("span", {}, links), el("span", {}, rechts))), wert: c.wert };
+  });
+  const zw = zeitwahl({ alt });
+  const nz = notizFeld(alt?.notiz || "");
+  oeffneBlatt({ titel: "Wie geht es dir gerade?", untertitel: "5 ist jeweils gut. Leer lassen geht.",
+    inhalt: [...skalen.map((s) => s.node), zw.node, nz.node], knoepfe: [
+      { text: "Speichern", klasse: "haupt" + (alt ? "" : " voll"), aktion: async () => {
+        const daten = {};
+        for (const s of skalen) if (s.wert() != null) daten[s.k] = s.wert();
+        if (!Object.keys(daten).length) throw new Error("Mindestens eine Skala wählen.");
+        const w = zw.wert();
+        const gespeichert = await erfasse("wirkung", mitZeit(daten, w), { zeit: w.zeit, notiz: nz.wert(), ersetzt: alt?.id || null });
+        schliesseBlatt();
+        toastFuer(gespeichert);
+      } },
+      ...(alt ? [{ text: "Löschen", klasse: "warn", aktion: async () => { await storniere(alt); schliesseBlatt(); } }] : []),
+      { text: "Abbrechen", klasse: "leicht voll", aktion: schliesseBlatt },
+    ] });
+}
+
+function nebenBlatt(art, alt = null) {
+  const d0 = alt?.daten || { art };
+  const text = el("input", { type: "text", "aria-label": "Welche Nebenwirkung", value: d0.text || "", hidden: d0.art !== "freitext" });
+  const artWahl = chips([...NEBENWIRKUNGEN, ["freitext", "Andere"]], { wert: d0.art,
+    beiWahl: (w) => { text.hidden = w !== "freitext"; } });
+  const st = chips(STAERKEN, { wert: d0.staerke ?? null, abwaehlbar: true });
+  const zw = zeitwahl({ alt });
+  const nz = notizFeld(alt?.notiz || "");
+  oeffneBlatt({ titel: "Nebenwirkung", inhalt: [feld("Was", artWahl.node, text), feld("Stärke", st.node), zw.node, nz.node], knoepfe: [
+    { text: "Speichern", klasse: "haupt" + (alt ? "" : " voll"), aktion: async () => {
+      const a = artWahl.wert();
+      if (!a) throw new Error("Was für eine Nebenwirkung?");
+      const daten = { art: a };
+      if (a === "freitext") { if (!text.value.trim()) throw new Error("Kurz beschreiben."); daten.text = text.value.trim(); }
+      if (st.wert() != null) daten.staerke = st.wert();
+      const w = zw.wert();
+      const gespeichert = await erfasse("nebenwirkung", mitZeit(daten, w), { zeit: w.zeit, notiz: nz.wert(), ersetzt: alt?.id || null });
+      schliesseBlatt();
+      toastFuer(gespeichert);
+    } },
+    ...(alt ? [{ text: "Löschen", klasse: "warn", aktion: async () => { await storniere(alt); schliesseBlatt(); } }] : []),
+    { text: "Abbrechen", klasse: "leicht voll", aktion: schliesseBlatt },
+  ] });
+}
+
+function zahlFeld(titel, wert) {
+  const i = el("input", { type: "text", inputmode: "numeric", "aria-label": titel, value: wert ?? "" });
+  return { node: feld(titel, i), wert: () => i.value.trim() };
+}
+function ganz(text, name, lo, hi) {
+  if (text === "") return undefined;
+  const n = Number(text.replace(",", "."));
+  if (!Number.isInteger(n) || n < lo || n > hi) throw new Error(`${name}: ${lo} bis ${hi}`);
+  return n;
+}
+
+/** Blatt für die übrigen Typen (Blutdruck, Notiz, Essen und Trinken, Wachphase). */
+function allgemeinBlatt(typ, alt = null) {
+  const d0 = alt?.daten || {};
+  const inhalt = [];
+  let lesen;
+  const titel = { blutdruck: "Blutdruck und Puls", notiz: "Notiz", mahlzeit: "Mahlzeit", kaffee: "Kaffee", alkohol: "Alkohol", wach: "Wachphase" }[typ] || typ;
+  if (typ === "blutdruck") {
+    const s = zahlFeld("Systolisch", d0.sys), di = zahlFeld("Diastolisch", d0.dia), p = zahlFeld("Puls", d0.puls);
+    inhalt.push(s.node, di.node, p.node);
+    lesen = () => {
+      const sys = ganz(s.wert(), "Systolisch", 60, 260), dia = ganz(di.wert(), "Diastolisch", 30, 160), puls = ganz(p.wert(), "Puls", 25, 220);
+      if ((sys === undefined) !== (dia === undefined)) throw new Error("Systolisch und diastolisch zusammen angeben.");
+      const d = {};
+      if (sys !== undefined) { if (dia >= sys) throw new Error("Diastolisch muss kleiner sein."); d.sys = sys; d.dia = dia; }
+      if (puls !== undefined) d.puls = puls;
+      if (!Object.keys(d).length) throw new Error("Blutdruck oder Puls angeben.");
+      return d;
+    };
+  } else if (typ === "mahlzeit") {
+    const r = chips([[true, "Richtige Mahlzeit"], [false, "Snack"]], { wert: d0.richtig ?? true });
+    const art = el("input", { type: "text", "aria-label": "Was", value: d0.art || "" });
+    inhalt.push(feld("Art", r.node), feld("Was (optional)", art));
+    lesen = () => ({ richtig: r.wert() !== false, ...(art.value.trim() ? { art: art.value.trim() } : {}) });
+  } else if (typ === "kaffee" || typ === "alkohol") {
+    const m = el("input", { type: "text", inputmode: "decimal", "aria-label": "Menge", value: d0.menge ?? "" });
+    inhalt.push(feld(typ === "kaffee" ? "Tassen (optional)" : "Gläser (optional)", m));
+    lesen = () => {
+      if (!m.value.trim()) return {};
+      const n = Number(m.value.replace(",", "."));
+      if (!Number.isFinite(n) || n < 0.01 || n > 50) throw new Error("Menge: 0,01 bis 50");
+      return { menge: n };
+    };
+  } else if (typ === "wach") {
+    const bisAlt = d0.bis ? isoLokal(new Date(d0.bis)).slice(0, 16) : "";
+    const bis = el("input", { type: "datetime-local", "aria-label": "Wach bis", value: bisAlt });
+    const grund = el("input", { type: "text", "aria-label": "Grund", value: d0.grund || "" });
+    inhalt.push(feld("Wach bis (leer = läuft noch)", bis), feld("Grund (optional)", grund));
+    lesen = (w) => {
+      const d = {};
+      if (bis.value) {
+        d.bis = d0.bis && bis.value.slice(0, 16) === bisAlt ? d0.bis : isoLokal(new Date(bis.value));
+        if (Date.parse(d.bis) < Date.parse(w.zeit)) throw new Error("„Bis“ liegt vor dem Beginn.");
+      }
+      if (grund.value.trim()) d.grund = grund.value.trim();
+      return d;
+    };
+  } else {
+    lesen = () => ({});
+  }
+  const zw = zeitwahl({ alt });
+  const nz = notizFeld(alt?.notiz || "", typ === "notiz" ? "Text" : "Notiz");
+  inhalt.push(zw.node, nz.node);
+  oeffneBlatt({ titel, inhalt, knoepfe: [
+    { text: "Speichern", klasse: "haupt" + (alt ? "" : " voll"), aktion: async () => {
+      const w = zw.wert();
+      const daten = lesen(w);
+      if (typ === "notiz" && !nz.wert()) throw new Error("Text fehlt.");
+      const gespeichert = await erfasse(typ, mitZeit(daten, w), { zeit: w.zeit, notiz: nz.wert(), ersetzt: alt?.id || null });
+      schliesseBlatt();
+      toastFuer(gespeichert);
+    } },
+    ...(alt ? [{ text: "Löschen", klasse: "warn", aktion: async () => { await storniere(alt); schliesseBlatt(); } }] : []),
+    { text: "Abbrechen", klasse: "leicht voll", aktion: schliesseBlatt },
+  ] });
+}
+
+function bearbeite(e) {
+  if (e.typ === "einnahme") return einnahmeBlatt(planZeile(e), e);
+  if (e.typ === "wirkung") return befindenBlatt(e);
+  if (e.typ === "nebenwirkung") return nebenBlatt(e.daten.art, e);
+  return allgemeinBlatt(e.typ, e);
+}
+
+/** Sperre gegen Doppeltipps bei Ein-Tipp-Knöpfen (Wach, Essen und Trinken). */
+let einTippLaeuft = false;
+async function einmal(fn) {
+  if (einTippLaeuft) return;
+  einTippLaeuft = true;
+  try { await fn(); }
+  catch (f) { toast(`Nicht gespeichert: ${f.message}`); }
+  finally { setTimeout(() => { einTippLaeuft = false; }, 400); }
+}
+
+/** Ein Tipp speichert (Essen und Trinken), Hinweis mit "Zeit ändern" und "Rückgängig". */
+async function schnell(typ, daten) {
+  if (einTippLaeuft) return;
+  einTippLaeuft = true;
+  let ev;
+  try { ev = await erfasse(typ, daten); }
+  catch (f) { toast(`Nicht gespeichert: ${f.message}`); return; }
+  finally { setTimeout(() => { einTippLaeuft = false; }, 400); }
+  toast(`${zeitText(ev)} ${beschreibe(ev)}`, { aendernText: "Zeit ändern",
+    aendern: () => bearbeite(aktuelleFassung(ev)), rueck: () => storniere(aktuelleFassung(ev)) });
 }
 
 // ------------------------------------------------------------ Zeichnen
 
-function zeichne() {
-  // Mittel aus dem aktiven Protokoll
-  const mittel = zustand.konfig?.mittel || [];
-  $("mittel").replaceChildren(...mittel.map((m) => el("button", {
-    type: "button", class: "knopf",
-    onclick: () => erfasse("einnahme", { mittel: m.name, supplement_id: m.supplement_id, status: "genommen" }),
-  }, m.name, el("small", {}, [m.zeitpunkt, m.detail].filter(Boolean).join(" · ")))));
-  $("mittelleer").hidden = mittel.length > 0;
+function zeichneHeute(wirk) {
+  const plan = tagesplan(zustand.konfig);
+  const tag = heute();
+  $("planleer").hidden = plan.length > 0;
+  const bloecke = [];
+  let faellig = 0;
+  const jetztHHMM = uhr(isoLokal(new Date()));
+  for (const block of ["morgens", "mittags", "abends"]) {
+    const zeilen = plan.filter((z) => z.block === block);
+    if (!zeilen.length) continue;
+    const mitStatus = zeilen.map((z) => ({ z, s: statusFuer(z, wirk, tag) }));
+    const erledigt = mitStatus.filter((x) => x.s).length;
+    faellig += mitStatus.filter((x) => !x.s && x.z.von && x.z.von <= jetztHHMM).length;
+    const offeneSupps = mitStatus.filter((x) => !x.s && !x.z.medikament).map((x) => x.z);
+    bloecke.push(el("div", { class: "block" },
+      el("div", { class: "blockkopf" }, el("h2", {}, TAGESZEITEN[block].label), el("span", { class: "leise" }, `${erledigt} von ${zeilen.length}`)),
+      el("div", { class: "karte" }, mitStatus.map(({ z, s }) => {
+        const st = s ? s.daten.status : "";
+        const rechts = s ? (st === "ausgelassen" ? "ausgelassen" : zeitText(s)) : (z.medikament && z.dosis_mg != null ? `${z.dosis_mg} mg` : "");
+        const klein = [z.medikament ? z.label : null, s?.daten?.dosis_mg != null ? `${s.daten.dosis_mg} mg` : null].filter(Boolean).join(" · ");
+        return el("button", { type: "button", class: `zeile ${st}`, onclick: () => einnahmeBlatt(z, s ? aktuelleFassung(s) : null),
+          "aria-label": `${z.name}${klein ? `, ${klein}` : ""}${s ? `, ${st} ${uhr(s.zeit)}` : ", offen"}` },
+        el("span", { class: "kreis", "aria-hidden": "true" }, st === "genommen" ? "✓" : st === "ausgelassen" ? "–" : ""),
+        el("span", { class: "was" }, el("span", { class: "name" }, z.name), klein ? el("small", {}, klein) : null),
+        el("span", { class: "rechts" }, rechts));
+      })),
+      offeneSupps.length >= 2 ? el("button", { type: "button", class: "chip sammel", onclick: () => sammelBlatt(block, offeneSupps) },
+        `Offene Supplemente abhaken (${offeneSupps.length})`) : null));
+  }
+  $("plan").replaceChildren(...bloecke);
+  const weitere = plan.filter((z) => z.block === "weitere");
+  $("weitere").replaceChildren(
+    ...weitere.map((z) => {
+      const heuteGenommen = wirk.filter((e) => e.zeit.slice(0, 10) === tag && gehoertZu(e, z) && e.daten.status === "genommen");
+      return el("button", { type: "button", class: "knopf", onclick: () => einnahmeBlatt(z) }, z.name,
+        el("small", { class: "leise", style: "display:block" }, heuteGenommen.length
+          ? `heute ${heuteGenommen.map((e) => `${zeitText(e)}${e.daten.dosis_mg != null ? ` ${e.daten.dosis_mg} mg` : ""}`).join(", ")}` : "bei Bedarf"));
+    }),
+    el("button", { type: "button", class: "knopf neben", onclick: () => einnahmeBlatt(null) }, "Anderes Mittel…"));
+  $("offenzahl").hidden = !faellig;
+  $("offenzahl").textContent = faellig;
+}
 
-  // Wachphase
+function zeichneNacht() {
   const offen = offeneWachphase(zustand.alle);
   $("wachbanner").hidden = !offen;
-  $("wach").hidden = !!offen;
   if (offen) $("wachtext").textContent = `Wach seit ${uhr(offen.zeit)}`;
+  $("wachknopf").textContent = offen ? "Wieder schlafen" : "Wach";
+  const grenze = Date.now() - 14 * 3600e3;
+  const phasen = wirksam(zustand.alle).filter((e) => e.typ === "wach" && Date.parse(e.zeit) >= grenze);
+  $("nachtliste").replaceChildren(...(phasen.length ? phasen.map((e) => el("li", {},
+    el("button", { type: "button", onclick: () => bearbeite(e) }, el("span", { class: "zeit" }, zeitText(e)), el("span", {}, beschreibe(e)))))
+    : [el("li", { class: "leer" }, "Keine Wachphase in den letzten 14 Stunden.")]));
+}
 
-  // Tag
+function zeichneVerlauf(wirk) {
   const tag = zustand.tag || heute();
   $("tagtitel").textContent = tag === heute() ? "Heute" : new Date(`${tag}T12:00:00`).toLocaleDateString("de-CH",
     { weekday: "long", day: "numeric", month: "long" });
   $("tagvor").disabled = tag >= heute();
-  const liste = wirksam(zustand.alle).filter((e) => e.zeit.slice(0, 10) === tag);
-  $("liste").replaceChildren(...(liste.length ? liste.map((e) => el("li", {
-    onclick: () => oeffneDialog(e.typ, e),
-  }, el("span", { class: "zeit" }, uhr(e.zeit)), el("span", {}, beschreibe(e)),
-  e._sync ? null : el("span", { class: "offen" }, "nicht hochgeladen"))) : [el("li", { class: "leise" }, "Nichts erfasst.")]));
+  const liste = wirk.filter((e) => e.zeit.slice(0, 10) === tag);
+  $("liste").replaceChildren(...(liste.length ? liste.map((e) => el("li", {},
+    el("button", { type: "button", onclick: () => bearbeite(e) },
+      el("span", { class: "zeit" }, zeitText(e)), el("span", {}, beschreibe(e)),
+      e._sync ? null : el("span", { class: "offen" }, "nicht hochgeladen")))) : [el("li", { class: "leer" }, "Nichts erfasst.")]));
+  $("geraetknopf").textContent = `Gerät: ${zustand.geraet}`;
+}
 
-  // Abgleich
+function zeichne() {
+  const wirk = wirksam(zustand.alle);
+  zeichneHeute(wirk);
+  zeichneNacht();
+  zeichneVerlauf(wirk);
   const nOffen = zustand.alle.filter((e) => !e._sync).length;
   const s = $("sync");
   if (zustand.laeuft) { s.textContent = "Lädt hoch…"; s.className = "chip"; }
@@ -223,13 +529,23 @@ function zeichne() {
   else { s.textContent = zustand.sync.text ? `✓ ${zustand.sync.text}` : "✓"; s.className = "chip ok"; }
   $("hinweis").hidden = !zustand.sync.meldung;
   $("hinweis").textContent = zustand.sync.meldung || "";
-  $("geraetknopf").textContent = `Gerät: ${zustand.geraet}`;
+}
+
+const TITEL = { heute: "Heute", erfassen: "Erfassen", nacht: "Nacht", verlauf: "Verlauf" };
+function zeigeReiter(name) {
+  zustand.reiter = name;
+  for (const r of Object.keys(TITEL)) $(`reiter-${r}`).hidden = r !== name;
+  document.querySelectorAll(".reiterleiste button").forEach((b) => {
+    if (b.dataset.reiter === name) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
+  $("kopftitel").textContent = TITEL[name];
+  scrollTo(0, 0);
 }
 
 // ------------------------------------------------------------ Abgleich
 
 let baldUhr = null;
-function bald_abgleichen() { clearTimeout(baldUhr); baldUhr = setTimeout(abgleichen, 1500); }
+function baldAbgleichen() { clearTimeout(baldUhr); baldUhr = setTimeout(abgleichen, 1500); }
 
 async function abgleichen() {
   if (zustand.laeuft) return;
@@ -238,7 +554,7 @@ async function abgleichen() {
     return zeichne();
   }
   if (!navigator.onLine) { zustand.sync = { art: "", meldung: "" }; return zeichne(); }
-  zustand.laeuft = true;                     // Sperre vor dem ersten await
+  zustand.laeuft = true;
   let tok = null;
   try { tok = await token(); } catch { tok = null; }
   if (!tok) {
@@ -250,14 +566,12 @@ async function abgleichen() {
     await hochladen(tok);
     const k = await ladeKonfig(tok).catch(() => null);
     if (k) zustand.konfig = k;
-    // Aus dem Speicher neu lesen, aber nichts verlieren, was während des Abgleichs dazukam
     const gespeichert = await alleEreignisse();
     const ids = new Set(gespeichert.map((e) => e.id));
     zustand.alle = [...gespeichert, ...zustand.alle.filter((e) => !ids.has(e.id))];
     zustand.sync = { art: "ok", text: new Date().toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" }) };
     $("konto").textContent = "Abmelden";
   } catch (f) {
-    // fetch wirft TypeError, wenn keine Verbindung besteht: kein Fehler, nur später.
     zustand.sync = f instanceof TypeError
       ? { art: "", meldung: "Keine Verbindung zu OneDrive. Alles bleibt auf dem Gerät und wird später hochgeladen." }
       : { art: "fehler", meldung: f.message };
@@ -269,29 +583,34 @@ async function abgleichen() {
 
 // ------------------------------------------------------------ Start
 
-function knoepfeVerdrahten() {
-  $("fokus").replaceChildren(...[1, 2, 3, 4, 5].map((n) =>
-    el("button", { type: "button", class: "knopf zahl", onclick: () => erfasse("wirkung", { fokus: n }) }, n)));
+function verdrahten() {
+  document.querySelectorAll(".reiterleiste button").forEach((b) => b.addEventListener("click", () => zeigeReiter(b.dataset.reiter)));
   $("neben").replaceChildren(
-    ...NEBENWIRKUNGEN.map(([k, t]) => el("button", { type: "button", class: "knopf", onclick: () => erfasse("nebenwirkung", { art: k }) }, t)),
-    el("button", { type: "button", class: "knopf neben", onclick: () => oeffneDialog("nebenwirkung", null, { art: "freitext" }) }, "Andere…"));
+    ...NEBENWIRKUNGEN.map(([k, t]) => el("button", { type: "button", class: "knopf", onclick: () => nebenBlatt(k) }, t)),
+    el("button", { type: "button", class: "knopf neben", onclick: () => nebenBlatt("freitext") }, "Andere…"));
   const aktionen = {
-    "mahlzeit": () => erfasse("mahlzeit", { richtig: true }),
-    "snack": () => erfasse("mahlzeit", { richtig: false }),
-    "kaffee": () => erfasse("kaffee", {}),
-    "alkohol": () => erfasse("alkohol", { menge: 1 }),
-    "blutdruck": () => oeffneDialog("blutdruck"),
-    "notiz": () => oeffneDialog("notiz"),
-    "anderes-mittel": () => oeffneDialog("einnahme", null, { status: "genommen" }),
+    befinden: () => befindenBlatt(),
+    mahlzeit: () => schnell("mahlzeit", { richtig: true }),
+    snack: () => schnell("mahlzeit", { richtig: false }),
+    kaffee: () => schnell("kaffee", {}),
+    alkohol: () => schnell("alkohol", { menge: 1 }),
+    blutdruck: () => allgemeinBlatt("blutdruck"),
+    notiz: () => allgemeinBlatt("notiz"),
   };
   document.querySelectorAll("[data-aktion]").forEach((b) => b.addEventListener("click", aktionen[b.dataset.aktion]));
-  $("wach").onclick = () => erfasse("wach", {});
-  $("wachende").onclick = async () => {
+  $("wachknopf").onclick = () => einmal(async () => {
     const w = offeneWachphase(zustand.alle);
-    if (w) await erfasse("wach", { ...w.daten, bis: isoLokal(new Date()) }, { zeit: w.zeit, ersetzt: w.id, notiz: w.notiz });
-  };
-  // Im echten Betrieb verlässt anmelden() die Seite (Microsoft); im Testmodus
-  // kehrt es zurück, dann gleich abgleichen.
+    if (w) toastFuer(await erfasse("wach", { ...w.daten, bis: isoLokal(new Date()) }, { zeit: w.zeit, ersetzt: w.id, notiz: w.notiz }));
+    else toastFuer(await erfasse("wach", {}));
+  });
+  // Blatt: Tipp ausserhalb schliesst ohne zu speichern
+  $("blatt").addEventListener("click", (e) => {
+    if (e.target !== $("blatt")) return;
+    const r = $("blatt").getBoundingClientRect();
+    if (e.clientY < r.top || e.clientY > r.bottom || e.clientX < r.left || e.clientX > r.right) schliesseBlatt();
+  });
+  $("bform").addEventListener("submit", (e) => e.preventDefault());
+
   const anmeldenUndAbgleichen = () => anmelden().then(abgleichen).catch((f) => alert(f.message));
   $("sync").onclick = () => (zustand.sync.art === "anmelden" && eingerichtet() ? anmeldenUndAbgleichen() : abgleichen());
   $("konto").onclick = async () => {
@@ -304,21 +623,13 @@ function knoepfeVerdrahten() {
     if (!GERAET_MUSTER.test(n)) return alert("Nur Kleinbuchstaben, Ziffern und Bindestrich.");
     zustand.geraet = n; await schreibe("geraet", n); zeichne();
   };
-  const schiebe = (delta) => {
-    const d = new Date(`${zustand.tag || heute()}T12:00:00`);
-    d.setDate(d.getDate() + delta);
-    const t = isoLokal(d).slice(0, 10);
-    zustand.tag = t >= heute() ? null : t;
-    zeichne();
-  };
   $("export").onclick = async () => {
-    // Sicherung der nicht hochgeladenen Einträge im Logformat (eine Zeile je Ereignis).
     // Ablage am Laptop in erfassung/eingang/sicherung/ (eigener Unterordner, damit
     // sie keine Tagesdatei überschreibt); der Import überspringt schon bekannte ids.
     const offen = zustand.alle.filter((e) => !e._sync);
     if (!offen.length) return alert("Nichts offen, alles ist hochgeladen.");
     const name = `${heute()}_${zustand.geraet}.jsonl`;
-    const datei = new File([offen.map(zeile).join("\n") + "\n"], name, { type: "application/x-ndjson" });
+    const datei = new File([offen.map(logzeile).join("\n") + "\n"], name, { type: "application/x-ndjson" });
     if (navigator.canShare?.({ files: [datei] })) {
       try { await navigator.share({ files: [datei], title: name }); } catch { /* abgebrochen */ }
     } else {
@@ -326,13 +637,20 @@ function knoepfeVerdrahten() {
       document.body.append(a); a.click(); a.remove();
     }
   };
+  const schiebe = (delta) => {
+    const d = new Date(`${zustand.tag || heute()}T12:00:00`);
+    d.setDate(d.getDate() + delta);
+    const t = isoLokal(d).slice(0, 10);
+    zustand.tag = t >= heute() ? null : t;
+    zeichne();
+  };
   $("tagzurueck").onclick = () => schiebe(-1);
   $("tagvor").onclick = () => schiebe(1);
 }
 
 async function start() {
   $("version").textContent = `v${VERSION}${TESTMODUS ? " · Testmodus" : ""}`;
-  knoepfeVerdrahten();
+  verdrahten();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   zustand.geraet = (await lies("geraet")) || "iphone";
@@ -340,10 +658,12 @@ async function start() {
   zustand.alle = await alleEreignisse();
   try { await rueckkehrVerarbeiten(); } catch (f) { zustand.sync = { art: "fehler", meldung: f.message }; }
   $("konto").textContent = (await lies("token")) ? "Abmelden" : "Anmelden";
+  zeigeReiter("heute");
   zeichne();
   abgleichen();
   addEventListener("online", abgleichen);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { zeichne(); abgleichen(); } });
+  setInterval(() => { if (document.visibilityState === "visible" && !$("blatt").open) zeichne(); }, 60e3);
 }
 
 start();

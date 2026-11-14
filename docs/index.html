@@ -6,7 +6,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://*.sharepoint.com https://*.svc.ms; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex, nofollow">
-<meta name="theme-color" content="#2f5d50">
+<meta name="theme-color" content="#4a5a2c">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -19,37 +19,24 @@
 </head>
 <body>
 <header class="kopf">
-  <h1>Hanna</h1>
+  <h1 id="kopftitel">Heute</h1>
   <button id="sync" class="chip" type="button">…</button>
 </header>
-<div id="hinweis" class="hinweis" hidden></div>
+<div id="hinweis" class="hinweis" role="status" hidden></div>
 
 <main>
-  <section id="wachbanner" class="banner" hidden>
-    <span id="wachtext"></span>
-    <button id="wachende" type="button" class="gross">Wieder schlafen</button>
+  <section id="reiter-heute" class="reiter">
+    <div id="plan"></div>
+    <p id="planleer" class="leise" hidden>Noch kein Protokoll geladen. Nach der Anmeldung kommen die Mittel aus dem aktiven Protokoll.</p>
+    <h2>Weitere</h2>
+    <div class="raster" id="weitere"></div>
   </section>
 
-  <section>
-    <h2>Einnahmen</h2>
-    <div id="mittel" class="raster"></div>
-    <p id="mittelleer" class="leise" hidden>Noch keine Mittel geladen. Nach der Anmeldung kommen sie aus dem aktiven Protokoll.</p>
-    <div class="raster"><button type="button" class="knopf neben" data-aktion="anderes-mittel">Anderes Mittel…</button></div>
-  </section>
-
-  <section>
-    <h2>Nacht</h2>
-    <div class="raster"><button id="wach" type="button" class="knopf">Wach</button></div>
-  </section>
-
-  <section>
-    <h2>Fokus</h2>
-    <div class="reihe" id="fokus"></div>
+  <section id="reiter-erfassen" class="reiter" hidden>
+    <h2>Befinden</h2>
+    <div class="raster"><button type="button" class="knopf gross-text" data-aktion="befinden">Wie geht es dir gerade?</button></div>
     <h2>Nebenwirkung</h2>
     <div class="raster" id="neben"></div>
-  </section>
-
-  <section>
     <h2>Essen und Trinken</h2>
     <div class="raster">
       <button type="button" class="knopf" data-aktion="mahlzeit">Mahlzeit</button>
@@ -57,9 +44,6 @@
       <button type="button" class="knopf" data-aktion="kaffee">Kaffee</button>
       <button type="button" class="knopf" data-aktion="alkohol">Alkohol</button>
     </div>
-  </section>
-
-  <section>
     <h2>Messen und Notiz</h2>
     <div class="raster">
       <button type="button" class="knopf" data-aktion="blutdruck">Blutdruck…</button>
@@ -67,41 +51,50 @@
     </div>
   </section>
 
-  <section>
+  <section id="reiter-nacht" class="reiter" hidden>
+    <div id="wachbanner" class="banner" hidden><span id="wachtext"></span></div>
+    <button id="wachknopf" type="button" class="riesig">Wach</button>
+    <h2>Diese Nacht</h2>
+    <ul id="nachtliste" class="liste"></ul>
+  </section>
+
+  <section id="reiter-verlauf" class="reiter" hidden>
     <div class="tagkopf">
       <button id="tagzurueck" type="button" class="chip" aria-label="Vortag">‹</button>
       <h2 id="tagtitel">Heute</h2>
       <button id="tagvor" type="button" class="chip" aria-label="Folgetag">›</button>
     </div>
     <ul id="liste" class="liste"></ul>
-  </section>
-
-  <section class="fuss">
-    <button id="konto" type="button" class="chip">Anmelden</button>
-    <button id="geraetknopf" type="button" class="chip"></button>
-    <button id="export" type="button" class="chip">Offene sichern</button>
-    <span id="version" class="leise"></span>
-    <p class="leise">Vor dem Löschen oder Neuinstallieren der App muss oben „✓“ stehen. Nicht hochgeladene Einträge liegen nur auf diesem Gerät; „Offene sichern“ gibt sie als Datei weiter.</p>
+    <div class="fuss">
+      <button id="konto" type="button" class="chip">Anmelden</button>
+      <button id="geraetknopf" type="button" class="chip"></button>
+      <button id="export" type="button" class="chip">Offene sichern</button>
+      <span id="version" class="leise"></span>
+      <p class="leise">Vor dem Löschen oder Neuinstallieren der App muss oben „✓“ stehen. Nicht hochgeladene Einträge liegen nur auf diesem Gerät; „Offene sichern“ gibt sie als Datei weiter.</p>
+    </div>
   </section>
 </main>
 
-<div id="toast" class="toast" hidden>
+<nav class="reiterleiste" aria-label="Bereiche">
+  <button type="button" data-reiter="heute" aria-current="page"><span class="sym" aria-hidden="true">✓</span>Heute<span id="offenzahl" class="zahl" hidden></span></button>
+  <button type="button" data-reiter="erfassen"><span class="sym" aria-hidden="true">＋</span>Erfassen</button>
+  <button type="button" data-reiter="nacht"><span class="sym" aria-hidden="true">☾</span>Nacht</button>
+  <button type="button" data-reiter="verlauf"><span class="sym" aria-hidden="true">≡</span>Verlauf</button>
+</nav>
+
+<div id="toast" class="toast" role="status" hidden>
   <span id="toasttext"></span>
-  <button id="toastausgelassen" type="button" hidden>Ausgelassen</button>
-  <button id="toastrueck" type="button">Rückgängig</button>
   <button id="toastaendern" type="button">Ändern</button>
+  <button id="toastrueck" type="button">Rückgängig</button>
 </div>
 
-<dialog id="dialog">
-  <form id="formular" method="dialog">
-    <h3 id="dtitel"></h3>
-    <div id="dfelder"></div>
-    <div class="dknoepfe">
-      <button type="button" id="dloeschen" class="warn">Löschen</button>
-      <span class="luecke"></span>
-      <button type="button" id="dabbrechen">Abbrechen</button>
-      <button type="submit" id="dspeichern" class="haupt">Speichern</button>
-    </div>
+<dialog id="blatt" class="blatt" aria-labelledby="btitel">
+  <form id="bform" method="dialog">
+    <div class="griff" aria-hidden="true"></div>
+    <h3 id="btitel"></h3>
+    <p id="buntertitel" class="leise"></p>
+    <div id="binhalt"></div>
+    <div id="bknoepfe" class="bknoepfe"></div>
   </form>
 </dialog>
 
