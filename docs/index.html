@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://*.sharepoint.com https://*.svc.ms; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#2f5d50">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Hanna">
+<title>Hanna Erfassung</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="kopf">
+  <h1>Hanna</h1>
+  <button id="sync" class="chip" type="button">…</button>
+</header>
+<div id="hinweis" class="hinweis" hidden></div>
+
+<main>
+  <section id="wachbanner" class="banner" hidden>
+    <span id="wachtext"></span>
+    <button id="wachende" type="button" class="gross">Wieder schlafen</button>
+  </section>
+
+  <section>
+    <h2>Einnahmen</h2>
+    <div id="mittel" class="raster"></div>
+    <p id="mittelleer" class="leise" hidden>Noch keine Mittel geladen. Nach der Anmeldung kommen sie aus dem aktiven Protokoll.</p>
+    <div class="raster"><button type="button" class="knopf neben" data-aktion="anderes-mittel">Anderes Mittel…</button></div>
+  </section>
+
+  <section>
+    <h2>Nacht</h2>
+    <div class="raster"><button id="wach" type="button" class="knopf">Wach</button></div>
+  </section>
+
+  <section>
+    <h2>Fokus</h2>
+    <div class="reihe" id="fokus"></div>
+    <h2>Nebenwirkung</h2>
+    <div class="raster" id="neben"></div>
+  </section>
+
+  <section>
+    <h2>Essen und Trinken</h2>
+    <div class="raster">
+      <button type="button" class="knopf" data-aktion="mahlzeit">Mahlzeit</button>
+      <button type="button" class="knopf" data-aktion="snack">Snack</button>
+      <button type="button" class="knopf" data-aktion="kaffee">Kaffee</button>
+      <button type="button" class="knopf" data-aktion="alkohol">Alkohol</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Messen und Notiz</h2>
+    <div class="raster">
+      <button type="button" class="knopf" data-aktion="blutdruck">Blutdruck…</button>
+      <button type="button" class="knopf" data-aktion="notiz">Notiz…</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="tagkopf">
+      <button id="tagzurueck" type="button" class="chip" aria-label="Vortag">‹</button>
+      <h2 id="tagtitel">Heute</h2>
+      <button id="tagvor" type="button" class="chip" aria-label="Folgetag">›</button>
+    </div>
+    <ul id="liste" class="liste"></ul>
+  </section>
+
+  <section class="fuss">
+    <button id="konto" type="button" class="chip">Anmelden</button>
+    <button id="geraetknopf" type="button" class="chip"></button>
+    <button id="export" type="button" class="chip">Offene sichern</button>
+    <span id="version" class="leise"></span>
+    <p class="leise">Vor dem Löschen oder Neuinstallieren der App muss oben „✓“ stehen. Nicht hochgeladene Einträge liegen nur auf diesem Gerät; „Offene sichern“ gibt sie als Datei weiter.</p>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden>
+  <span id="toasttext"></span>
+  <button id="toastausgelassen" type="button" hidden>Ausgelassen</button>
+  <button id="toastrueck" type="button">Rückgängig</button>
+  <button id="toastaendern" type="button">Ändern</button>
+</div>
+
+<dialog id="dialog">
+  <form id="formular" method="dialog">
+    <h3 id="dtitel"></h3>
+    <div id="dfelder"></div>
+    <div class="dknoepfe">
+      <button type="button" id="dloeschen" class="warn">Löschen</button>
+      <span class="luecke"></span>
+      <button type="button" id="dabbrechen">Abbrechen</button>
+      <button type="submit" id="dspeichern" class="haupt">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
