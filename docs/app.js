@@ -7,7 +7,7 @@ import { anmelden, abmelden, rueckkehrVerarbeiten, token, eingerichtet } from ".
 import { hochladen, ladeKonfig } from "./abgleich.js";
 import { TESTMODUS } from "./konfig.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 const $ = (id) => document.getElementById(id);
 
 const zustand = { alle: [], konfig: null, geraet: "iphone", tag: null, sync: { art: "", text: "" }, laeuft: false };
