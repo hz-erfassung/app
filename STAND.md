@@ -49,7 +49,7 @@ Durchgespielt 0.3.0 am 14.11. (Testmodus, Browser 375 px): Checkliste, Planzeit,
 
 ## Offen
 
-1. **Erster echter Lauf (Christian, 10 min):** vorher GitHub-Organisation `hz-erfassung` härten: ein Owner, Passkey/2FA, Branch-Schutz auf `main`, keine weiteren Repos (Gremium #6). Am iPhone in Safari öffnen, „Zum Home-Bildschirm“, anmelden und im Zustimmungsdialog prüfen: nur `Files.ReadWrite`, `offline_access`, `openid` (#7). Eine Testeingabe, am Laptop `py erfassung_import.py` (Probelauf), dann `--schreiben`. Im Verlauf ablesen, ob „Speicher: dauerhaft“ steht.
+1. **Erster echter Lauf (Christian):** GitHub-Organisation gehärtet am 15.11. (Gremium #6): ein Owner, 2FA für Konto und Organisation, Ruleset „Secure HZ“ auf dem Default-Branch sperrt Löschen und Force Push (über die API bestätigt), nur das Repo `app`. Noch offen: am iPhone in Safari öffnen, „Zum Home-Bildschirm“, anmelden und im Zustimmungsdialog prüfen: nur `Files.ReadWrite`, `offline_access`, `openid` (#7). Eine Testeingabe, am Laptop `py erfassung_import.py` (Probelauf), dann `--schreiben`. Im Verlauf ablesen, ob „Speicher: dauerhaft“ steht.
 2. **Aus der Prüfung 0.3.1, nicht im Auftrag:** veraltete `konfig.json` wirkt still weiter (#9; Plan im Gerät alt = Vorwahl der alten Dosis möglich), Ändern einer Einnahme ohne passende Planzeile verliert `dosis_mg` und `gabe`, Zusammenfassung zeigt eine per Rückgängig wiederhergestellte Einnahme als „(korrigiert)“, gemeinsame Testfälle JS/Python (#15).
 
 ## Bekannte Grenzen
