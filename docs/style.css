@@ -123,3 +123,19 @@ dialog.blatt::backdrop { background: rgba(0,0,0,.45); }
 .bknoepfe .leicht { font-weight: 400; color: var(--leise); }
 .bknoepfe .warn { color: var(--warn); font-weight: 400; }
 .fehlertext { color: var(--warn); font-size: .85rem; margin-top: 8px; }
+
+/* Rückblick (0.4, Befindens-Log) */
+#rueckblick { margin-top: 1rem; display: grid; gap: 8px; }
+#rueckblick .karte { overflow: visible; }
+.karte.rueckblick { padding: 12px; }
+.karte.rueckblick h3 { margin-bottom: .25rem; }
+.karte.rueckblick h4 { margin: 1rem 0 .25rem; font-size: .85rem; color: var(--leise); }
+.karte.rueckblick input[type=text] { width: 100%; min-height: 2.75rem; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--rand); background: var(--grund); }
+.karte.rueckblick .speichern { width: 100%; min-height: 3rem; margin-top: .9rem; border: 0; border-radius: 12px;
+  background: var(--akzent); color: var(--akzent-text); font-weight: 600; cursor: pointer; touch-action: manipulation; }
+#rueckblick > .zeile { border: 1px solid var(--rand); border-radius: 12px; background: var(--flaeche); }
+#rueckblick > .rb-nachtrag .name { color: var(--offen); }
+.offenzeile { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--rand); }
+.offenzeile .was { flex: 1; min-width: 0; }
+.offenzeile .was small { display: block; color: var(--leise); font-size: .8rem; }
+.offenzeile .chips { flex: none; flex-wrap: nowrap; }

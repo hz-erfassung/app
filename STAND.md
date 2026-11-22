@@ -1,6 +1,6 @@
 # Hanna Erfassung: Stand
 
-PWA zum Erfassen von Einnahmen, Wachphasen, Nebenwirkungen, Fokus, Essen und Trinken, Blutdruck und Notizen am iPhone. Offline, Upload ins Business-OneDrive über Microsoft Graph. Auftrag: `AI_Projekte/bereiche/gesundheit/handoff/2026-11-14_Hanna_Auftrag-Kai_Hanna-App.md`; Format: `AI_Projekte/bereiche/gesundheit/erfassung/LOGFORMAT.md`. Fassung 0.3.1 (Reparatur nach Gremium, Handoff `2026-11-14_Gremium_Auftrag-Kai_Hanna-0.3.1.md`), 14.11.2026.
+PWA zum Erfassen von Einnahmen, Wachphasen, Nebenwirkungen, Fokus, Essen und Trinken, Blutdruck und Notizen am iPhone. Offline, Upload ins Business-OneDrive über Microsoft Graph. Auftrag: `AI_Projekte/bereiche/gesundheit/handoff/2026-11-14_Hanna_Auftrag-Kai_Hanna-App.md`; Format: `AI_Projekte/bereiche/gesundheit/erfassung/LOGFORMAT.md`. Fassung 0.4.0 (Befindens-Log, Hanna, 22.11.2026; Vorgänger 0.3.1 Reparatur nach Gremium, 14.11.2026).
 
 ## Aufbau
 
@@ -25,6 +25,18 @@ py dev_server.py --wurzel %TEMP%\hanna_test_onedrive --port 8790
 ```
 
 Vorschau in Claude Code: `hanna-erfassung` in `AI_Projekte/.claude/launch.json`.
+
+## Bedienung 0.4: Rückblick (Befindens-Log, 22.11.2026)
+
+- Oben im Reiter **Heute**, Tagesgrenze 04:00: von 04:00 bis 17:59 die Karte **Letzte Nacht** (Schlafgefühl 1 bis 5 Pflicht; optional geschwitzt, Herzklopfen, unruhig, Gläser am Vorabend 0 bis 3+, nur wenn noch kein Alkohol erfasst ist; eine Zeile). Ab 18:00 bis 03:59 **Wie war der Tag?** (Energie, Fokus, Stimmung 1 bis 5 Pflicht; optional krank, Reise, Stress, hartes Training; „heute keine“ Nebenwirkungen, ausgeblendet wenn es an dem Tag schon eine gibt). Anker: 1 und 5 als Extrem, **3 = wie meist**.
+- Fehlt der Rückblick des Vortags (morgens) bzw. der Nacht (abends), steht eine Zeile „noch nicht bewertet · nachtragen“. Gespeichert: eine Zeile mit ✓ und „ändern“ (Blatt, mit Löschen).
+- Unter der Abendkarte **Noch offen**, nur Medikamente: Gaben nach Fensterbeginn ohne Eintrag (Genommen öffnet das Einnahme-Blatt, Ausgelassen speichert mit Planzeit, geschätzt) und Medikamente bei Bedarf ohne Eintrag (Heute nicht = `ausgelassen`, Grund „heute nicht“). Supplemente erscheinen dort nie.
+- „Genommen“ unter „Noch offen“ nach Mitternacht (Karte des Vortags) belegt die Uhrzeit mit der Planzeit des Vortags vor (geschätzt), damit die Einnahme nicht auf den neuen Kalendertag fällt. Bedarf-Einnahmen bis 03:59 zählen in der Karte zum Vortag; der Import bucht Einnahmen weiter nach Kalendertag.
+- Die Wahl in einer offenen Karte steht in `zustand.entwurf` und übersteht das Neuzeichnen (Abgleich, Minutentakt). Während in die Zeile getippt wird, zeichnet die Karte nicht neu.
+- Logformat: `rueckblick_nacht`, `rueckblick_tag` (LOGFORMAT.md). Die Regeln `logTag`, `rueckblickKarten`, `offeneMedikamente`, `pruefeRueckblick` liegen in `format.js` mit Tests.
+- Bewusst nicht: direkte Adressen `#morgen`/`#abend` für einen iOS-Kurzbefehl. Ein Kurzbefehl öffnet die Adresse in Safari, und Safari hat einen anderen Speicher als die App auf dem Home-Bildschirm; Einträge lägen dann am falschen Ort. Erinnerung stattdessen über einen Kalendertermin um 21:00 (Entscheid Christian 22.11.).
+
+Durchgespielt 0.4.0 am 22.11. (Testmodus, 375 px): Speichern ohne Werte abgewiesen („Noch wählen: …“), Wahl bleibt nach Neuzeichnen stehen, Bedarf „Heute nicht“, Gabe „Ausgelassen“ (~12:30), Abendkarte gespeichert, Nacht nachgetragen mit Merkmal, Gläsern und Zeile, Ändern im Blatt (Energie 2 → 3, ersetzt). Hochgeladene Zeilen bestehen `pruefe_zeile`; Probelauf des Imports auf einer Kopie der echten `hanna.db` schreibt sie nach `befinden_tag`.
 
 ## Bedienung (0.3)
 

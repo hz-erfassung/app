@@ -141,6 +141,18 @@ export function beschreibe(e) {
     case "blutdruck": s = "Blutdruck " + [d.sys != null ? `${d.sys}/${d.dia}` : null, d.puls != null ? `Puls ${d.puls}` : null]
       .filter(Boolean).join(", "); break;
     case "notiz": s = "Notiz"; break;
+    case "rueckblick_nacht": {
+      const m = (d.merkmale || []).map((k) => NACHT_MERKMALE.find(([x]) => x === k)?.[1] || k);
+      s = `Letzte Nacht: Schlafgefühl ${d.schlaf}` + (m.length ? `, ${m.join(", ")}` : "") +
+        (d.alkohol == null ? "" : d.alkohol === 0 ? ", kein Alkohol" : `, Alkohol ${d.alkohol}${d.alkohol === 3 ? "+" : ""} Gl.`);
+      break;
+    }
+    case "rueckblick_tag": {
+      const m = (d.merkmale || []).map((k) => TAG_MERKMALE.find(([x]) => x === k)?.[1] || k);
+      s = `Tag: Energie ${d.energie}, Fokus ${d.fokus}, Stimmung ${d.stimmung}` + (m.length ? `, ${m.join(", ")}` : "") +
+        (d.keine_nebenwirkungen ? ", keine Nebenwirkungen" : "");
+      break;
+    }
     default: s = e.typ;
   }
   return e.notiz ? `${s} · ${e.notiz}` : s;
@@ -299,4 +311,111 @@ export function rueckstand(alle, jetzt = new Date()) {
   const aeltestes = Math.min(...offen.map((e) => Date.parse(e.erfasst)));
   const stunden = (jetzt.getTime() - aeltestes) / 3600e3;
   return { anzahl: offen.length, aeltestes: new Date(aeltestes), stunden, alarm: stunden >= 24 };
+}
+
+// ------------------------------------------------------------ 0.4 Rückblick (Befindens-Log, 22.11.2026)
+
+/** Skalen des Abendrückblicks: Schlüssel, Name, Anker 1, Anker 5. 3 = wie meist. */
+export const TAG_SKALEN = [
+  ["energie", "Energie", "leer", "viel"],
+  ["fokus", "Fokus", "zerstreut", "voll da"],
+  ["stimmung", "Stimmung", "gedrückt", "gut"],
+];
+export const SCHLAF_SKALA = ["schlaf", "Schlafgefühl", "wie gerädert", "erholt"];
+export const NACHT_MERKMALE = [["geschwitzt", "geschwitzt"], ["herzklopfen", "Herzklopfen"], ["unruhig", "unruhig, viel wach"]];
+export const TAG_MERKMALE = [["krank", "krank"], ["reise", "Reise"], ["stress", "Stress"], ["training", "hartes Training"]];
+export const GLAESER = [[0, "nein"], [1, "1"], [2, "2"], [3, "3+ Gläser"]];
+const TAGESGRENZE_H = 4;
+
+/** Tag mit Tagesgrenze 04:00: 01:30 am 23. gehört zum 22. Gleiche Regel wie logtag() im Import. */
+export function logTag(jetzt = new Date()) {
+  const d = new Date(jetzt);
+  if (d.getHours() < TAGESGRENZE_H) d.setDate(d.getDate() - 1);
+  return isoLokal(d).slice(0, 10);
+}
+
+/** Datum JJJJ-MM-TT um n Tage verschoben. */
+export function tagPlus(tag, n) {
+  const [y, m, d] = tag.split("-").map(Number);
+  return isoLokal(new Date(y, m - 1, d + n, 12)).slice(0, 10);
+}
+
+/** Gültiger Rückblick für einen Bezugstag (zuletzt erfasst), oder null. art = "nacht" | "tag". */
+export function rueckblickFuer(art, tag, wirksameEreignisse) {
+  const typ = art === "nacht" ? "rueckblick_nacht" : "rueckblick_tag";
+  const t = wirksameEreignisse.filter((e) => e.typ === typ && e.daten?.[art] === tag);
+  if (!t.length) return null;
+  return t.sort((a, b) => Date.parse(a.erfasst) - Date.parse(b.erfasst) || (a.id < b.id ? -1 : 1))[t.length - 1];
+}
+
+/**
+ * Welche Rückblick-Karten "Heute" zeigt. Tag (Tagesgrenze 04:00) = T.
+ * 04:00 bis 17:59: Morgenkarte für die Nacht auf T; fehlt der Abendrückblick
+ * für T−1, eine Nachtrag-Zeile. 18:00 bis 03:59: Abendkarte für T; fehlt der
+ * Morgenrückblick für T, eine Nachtrag-Zeile.
+ */
+export function rueckblickKarten(wirksameEreignisse, jetzt = new Date()) {
+  const T = logTag(jetzt);
+  const h = jetzt.getHours();
+  const morgen = h >= TAGESGRENZE_H && h < 18;
+  const karten = [];
+  const karte = (art, tag) => ({ art, tag, ev: rueckblickFuer(art, tag, wirksameEreignisse) });
+  if (morgen) {
+    karten.push({ ...karte("nacht", T), haupt: true });
+    const gestern = karte("tag", tagPlus(T, -1));
+    if (!gestern.ev) karten.push({ ...gestern, haupt: false });
+  } else {
+    karten.push({ ...karte("tag", T), haupt: true });
+    const nacht = karte("nacht", T);
+    if (!nacht.ev) karten.push({ ...nacht, haupt: false });
+  }
+  return karten;
+}
+
+/**
+ * Offene Medikamente für den Abendrückblick (nur Medikamente, nie Supplemente).
+ * - Gaben mit Zeitfenster, deren Beginn vorbei ist und für die es am Tag nichts gibt.
+ * - Medikamente bei Bedarf ohne Eintrag am Tag (genommen oder nicht genommen).
+ * tag = Tag des Rückblicks; liegt er vor dem Kalendertag von jetzt (nach Mitternacht),
+ * gelten alle Gaben als vorbei.
+ */
+export function offeneMedikamente(plan, wirksameEreignisse, tag, jetzt = new Date()) {
+  const vorbei = tag < isoLokal(jetzt).slice(0, 10);
+  const t = hhmm(jetzt);
+  const out = [];
+  for (const z of plan.filter((x) => x.medikament)) {
+    if (z.block === "weitere") {
+      // Tagesgrenze 04:00 wie die Karte: eine Einnahme um 00:30 zählt noch zum Vortag
+      const any = wirksameEreignisse.some((e) => e.typ === "einnahme" && logTag(new Date(e.zeit)) === tag &&
+        ((z.supplement_id && e.daten?.supplement_id === z.supplement_id) || norm(e.daten?.mittel) === norm(z.name)));
+      if (!any) out.push({ zeile: z, art: "bedarf" });
+    } else if (!statusFuer(z, wirksameEreignisse, tag) && (vorbei || (z.von && z.von <= t))) {
+      out.push({ zeile: z, art: "gabe" });
+    }
+  }
+  return out;
+}
+
+/**
+ * Daten eines Rückblicks prüfen, bevor er gespeichert wird. Gleiche Regeln wie
+ * pruefe_zeile im Import: Bezugstag nicht nach dem Tag von jetzt (Tagesgrenze
+ * 04:00) und höchstens 7 Tage davor, Skalen 1 bis 5, Gläser 0 bis 3,
+ * keine_nebenwirkungen nur true, Merkmale aus der festen Liste.
+ */
+export function pruefeRueckblick(art, daten, jetzt = new Date()) {
+  const skala = (k) => Number.isInteger(daten[k]) && daten[k] >= 1 && daten[k] <= 5;
+  const T = logTag(jetzt), bezug = daten[art];
+  if (typeof bezug !== "string" || bezug > T) throw new Error("Dieser Tag liegt in der Zukunft.");
+  if (bezug < tagPlus(T, -7)) throw new Error("Älter als 7 Tage, nicht mehr änderbar.");
+  if (daten.keine_nebenwirkungen != null && daten.keine_nebenwirkungen !== true) throw new Error("Nebenwirkungen: nur „heute keine“.");
+  if (art === "nacht") {
+    if (!skala("schlaf")) throw new Error("Schlafgefühl fehlt noch.");
+    if (daten.alkohol != null && !(Number.isInteger(daten.alkohol) && daten.alkohol >= 0 && daten.alkohol <= 3)) throw new Error("Gläser: 0 bis 3.");
+  } else {
+    const fehlt = TAG_SKALEN.filter(([k]) => !skala(k)).map(([, n]) => n);
+    if (fehlt.length) throw new Error(`Noch wählen: ${fehlt.join(", ")}.`);
+  }
+  const erlaubt = new Set((art === "nacht" ? NACHT_MERKMALE : TAG_MERKMALE).map(([k]) => k));
+  if (daten.merkmale && daten.merkmale.some((m) => !erlaubt.has(m))) throw new Error("Merkmal unbekannt.");
+  return true;
 }

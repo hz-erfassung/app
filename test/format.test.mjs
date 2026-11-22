@@ -204,3 +204,77 @@ test("Versionen gleich: app.js, sw.js, package.json (Gremium #15)", () => {
   const pkg = JSON.parse(lies("../package.json")).version;
   assert.deepEqual([sw, pkg], [app, app]);
 });
+
+// ------------------------------------------------------------ 0.4 Rückblick (22.11.2026)
+import { logTag, tagPlus, rueckblickFuer, rueckblickKarten, offeneMedikamente, pruefeRueckblick, beschreibe } from "../docs/format.js";
+
+const rb = (id, erfasst, typ, daten, extra = {}) => ({ v: 1, id, geraet: "iphone", client: 1, zeit: erfasst, erfasst,
+  typ, daten, ersetzt: null, notiz: "", ...extra });
+
+test("logTag: Tagesgrenze 04:00 (gleich wie logtag im Import)", () => {
+  assert.equal(logTag(new Date(2030, 2, 6, 1, 30)), "2030-03-05");
+  assert.equal(logTag(new Date(2030, 2, 6, 3, 59)), "2030-03-05");
+  assert.equal(logTag(new Date(2030, 2, 6, 4, 0)), "2030-03-06");
+  assert.equal(tagPlus("2030-03-01", -1), "2030-02-28");
+});
+
+test("rueckblickFuer: zuletzt erfasster gilt", () => {
+  const a = rb("RNAAAAAA1", "2030-03-05T07:00:00+01:00", "rueckblick_nacht", { nacht: "2030-03-05", schlaf: 2 });
+  const b = rb("RNBBBBBB1", "2030-03-05T09:00:00+01:00", "rueckblick_nacht", { nacht: "2030-03-05", schlaf: 4 });
+  assert.equal(rueckblickFuer("nacht", "2030-03-05", [b, a]).id, b.id);
+  assert.equal(rueckblickFuer("tag", "2030-03-05", [a, b]), null);
+});
+
+test("rueckblickKarten: morgens Nacht plus Nachtrag gestern, abends Tag plus fehlende Nacht", () => {
+  const m = rueckblickKarten([], new Date(2030, 2, 6, 7, 40));
+  assert.deepEqual(m.map((k) => [k.art, k.tag, k.haupt]), [["nacht", "2030-03-06", true], ["tag", "2030-03-05", false]]);
+  const gestern = rb("RTAAAAAA1", "2030-03-05T21:00:00+01:00", "rueckblick_tag", { tag: "2030-03-05", energie: 3, fokus: 3, stimmung: 3 });
+  assert.equal(rueckblickKarten([gestern], new Date(2030, 2, 6, 7, 40)).length, 1);
+  const a = rueckblickKarten([], new Date(2030, 2, 6, 21, 15));
+  assert.deepEqual(a.map((k) => [k.art, k.tag, k.haupt]), [["tag", "2030-03-06", true], ["nacht", "2030-03-06", false]]);
+  // 01:30 nachts: Abendkarte für den Vortag
+  assert.equal(rueckblickKarten([], new Date(2030, 2, 7, 1, 30))[0].tag, "2030-03-06");
+});
+
+test("offeneMedikamente: offene Gaben nach Fensterbeginn, Bedarf ohne Eintrag, nie Supplemente", () => {
+  const plan = tagesplan(konfig);
+  const tag = "2030-01-10";
+  const morgens = rb("HCMORGEN1", "2030-01-10T07:10:00+01:00", "einnahme",
+    { mittel: "Medikament A", supplement_id: 501, gabe: "morgens", status: "genommen", dosis_mg: 10 });
+  const was = (l) => l.map((o) => [o.zeile.name, o.zeile.gabe, o.art]);
+  assert.deepEqual(was(offeneMedikamente(plan, [morgens], tag, new Date(2030, 0, 10, 21, 0))),
+    [["Medikament A", "mittags", "gabe"], ["Medikament B", null, "bedarf"]]);
+  // vor Beginn des Mittagsfensters ist die Mittagsgabe nicht offen
+  assert.deepEqual(was(offeneMedikamente(plan, [morgens], tag, new Date(2030, 0, 10, 9, 0))),
+    [["Medikament B", null, "bedarf"]]);
+  // nach Mitternacht für den Vortag: alle Gaben vorbei, auch ohne Morgengabe
+  assert.deepEqual(was(offeneMedikamente(plan, [], tag, new Date(2030, 0, 11, 1, 0))),
+    [["Medikament A", "morgens", "gabe"], ["Medikament A", "mittags", "gabe"], ["Medikament B", null, "bedarf"]]);
+  // Bedarf um 00:30 eingenommen zählt noch zum Vortag (Tagesgrenze 04:00)
+  const spaet = rb("MBSPAET01", "2030-01-11T00:30:00+01:00", "einnahme", { mittel: "Medikament B", status: "genommen", dosis_mg: 10 });
+  assert.ok(!offeneMedikamente(plan, [morgens, spaet], tag, new Date(2030, 0, 11, 0, 40)).some((o) => o.art === "bedarf"));
+  // Bedarf mit "heute nicht" (ausgelassen) ist erledigt
+  const nicht = rb("MBNICHT01", "2030-01-10T21:05:00+01:00", "einnahme",
+    { mittel: "Medikament B", status: "ausgelassen", grund: "heute nicht" });
+  assert.ok(!offeneMedikamente(plan, [morgens, nicht], tag, new Date(2030, 0, 10, 21, 10)).some((o) => o.art === "bedarf"));
+});
+
+test("pruefeRueckblick: Pflichtskalen, Bereiche, Merkmale", () => {
+  const j6 = new Date(2030, 2, 6, 21, 0);
+  assert.ok(pruefeRueckblick("nacht", { nacht: "2030-03-06", schlaf: 1, merkmale: ["geschwitzt"], alkohol: 0 }, j6));
+  assert.throws(() => pruefeRueckblick("nacht", { nacht: "2030-03-06" }, j6), /Schlafgefühl/);
+  assert.throws(() => pruefeRueckblick("nacht", { nacht: "2030-03-06", schlaf: 3, alkohol: 4 }, j6), /Gläser/);
+  assert.throws(() => pruefeRueckblick("tag", { tag: "2030-03-06", energie: 3 }, j6), /Fokus, Stimmung/);
+  assert.throws(() => pruefeRueckblick("tag", { tag: "2030-03-06", energie: 3, fokus: 3, stimmung: 3, merkmale: ["geschwitzt"] }, j6), /Merkmal/);
+  assert.throws(() => pruefeRueckblick("tag", { tag: "2030-03-06", energie: 3, fokus: 3, stimmung: 3, keine_nebenwirkungen: false }, j6), /Nebenwirkungen/);
+  // Bezugstag: nicht in der Zukunft, höchstens 7 Tage alt (gleich wie der Import)
+  const j = new Date(2030, 2, 10, 9, 0);
+  assert.ok(pruefeRueckblick("nacht", { nacht: "2030-03-03", schlaf: 3 }, j));
+  assert.throws(() => pruefeRueckblick("nacht", { nacht: "2030-03-02", schlaf: 3 }, j), /7 Tage/);
+  assert.throws(() => pruefeRueckblick("tag", { tag: "2030-03-11", energie: 3, fokus: 3, stimmung: 3 }, j), /Zukunft/);
+  assert.ok(pruefeRueckblick("tag", { tag: "2030-03-09", energie: 3, fokus: 3, stimmung: 3 }, new Date(2030, 2, 10, 1, 0)));
+  assert.throws(() => pruefeRueckblick("tag", { tag: "2030-03-10", energie: 3, fokus: 3, stimmung: 3 }, new Date(2030, 2, 10, 1, 0)), /Zukunft/);
+  assert.equal(beschreibe(rb("RNCCCCCC1", "2030-03-06T07:00:00+01:00", "rueckblick_nacht",
+    { nacht: "2030-03-06", schlaf: 1, merkmale: ["geschwitzt"], alkohol: 3 })),
+    "Letzte Nacht: Schlafgefühl 1, geschwitzt, Alkohol 3+ Gl.");
+});

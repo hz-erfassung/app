@@ -2,21 +2,25 @@
 // bei Einnahmen, Befinden mit vier Skalen. Format: LOGFORMAT.md im Bereich Gesundheit.
 // 0.3.1 (Gremium 14.11.2026): Medikamente mit Zeit "jetzt", keine Dosis-Vorwahl bei
 // Abweichung vom Plan, Rückgängig nach Ändern stellt die Vorfassung her, Rückstand-Banner.
+// 0.4 (22.11.2026, Hanna): Rückblick Nacht und Tag (Befindens-Log) mit offenen Medikamenten, Tagesgrenze 04:00.
 
 import {
   neuesEreignis, isoLokal, wirksam, offeneWachphase, beschreibe, zeile as logzeile,
   NEBENWIRKUNGEN, STAERKEN, BEFINDEN, GRUENDE, GERAET_MUSTER,
   tagesplan, statusFuer, gehoertZu, vorbelegung, letzteDosis, amTag, TAGESZEITEN,
   dosisVorschlag, dosisAusserhalb, rueckgaengig, rueckstand,
+  TAG_SKALEN, SCHLAF_SKALA, NACHT_MERKMALE, TAG_MERKMALE, GLAESER,
+  logTag, tagPlus, rueckblickKarten, offeneMedikamente, pruefeRueckblick,
 } from "./format.js";
 import { alleEreignisse, speichere, lies, schreibe } from "./speicher.js";
 import { anmelden, abmelden, rueckkehrVerarbeiten, token, eingerichtet } from "./anmeldung.js";
 import { hochladen, ladeKonfig } from "./abgleich.js";
 import { TESTMODUS } from "./konfig.js";
 
-const VERSION = "0.3.1";
+const VERSION = "0.4.0";
 const $ = (id) => document.getElementById(id);
-const zustand = { alle: [], konfig: null, geraet: "iphone", tag: null, reiter: "heute", sync: { art: "" }, laeuft: false };
+const zustand = { alle: [], konfig: null, geraet: "iphone", tag: null, reiter: "heute", sync: { art: "" }, laeuft: false,
+  entwurf: {}, offenKarte: null };
 
 function el(tag, attrs = {}, ...kinder) {
   const e = document.createElement(tag);
@@ -197,7 +201,7 @@ const planZeile = (e) => tagesplan(zustand.konfig).find((z) => gehoertZu(e, z)) 
  * Blatt für eine Einnahme. zeile = Zeile des Tagesplans (oder null für ein
  * anderes Mittel), alt = bestehendes Ereignis beim Ändern.
  */
-function einnahmeBlatt(zeile, alt = null) {
+function einnahmeBlatt(zeile, alt = null, zeitVorgabe = null) {
   const wirk = wirksam(zustand.alle);
   const d0 = alt?.daten || {};
   const inhalt = [];
@@ -227,7 +231,8 @@ function einnahmeBlatt(zeile, alt = null) {
 
   const plan = zeile?.plan ? amTag(heute(), zeile.plan) : null;
   const vb = zeile ? vorbelegung(zeile) : { art: "jetzt" };
-  const zw = zeitwahl({ vorgabe: vb, plan: plan && plan <= new Date() ? plan : null, alt });
+  // zeitVorgabe (0.4): Nachtrag für einen früheren Tag aus dem Abendrückblick, Uhrzeit vorbelegt
+  const zw = zeitwahl({ vorgabe: vb, plan: plan && plan <= new Date() ? plan : null, alt: alt || zeitVorgabe });
   const nz = notizFeld(alt?.notiz || "");
   inhalt.push(zw.node, nz.node);
 
@@ -446,6 +451,8 @@ function allgemeinBlatt(typ, alt = null) {
 }
 
 function bearbeite(e) {
+  if (e.typ === "rueckblick_nacht") return rueckblickBlatt("nacht", e.daten.nacht, e);
+  if (e.typ === "rueckblick_tag") return rueckblickBlatt("tag", e.daten.tag, e);
   if (e.typ === "einnahme") return einnahmeBlatt(planZeile(e), e);
   if (e.typ === "wirkung") return befindenBlatt(e);
   if (e.typ === "nebenwirkung") return nebenBlatt(e.daten.art, e);
@@ -474,9 +481,187 @@ async function schnell(typ, daten) {
     aendern: () => bearbeite(aktuelleFassung(ev)), rueck: () => macheRueckgaengig(ev) });
 }
 
+
+// ------------------------------------------------------------ Rückblick (0.4, Befindens-Log)
+
+const tagText = (tag) => tag === heute() ? "heute" : tag === tagPlus(heute(), -1) ? "gestern"
+  : new Date(`${tag}T12:00:00`).toLocaleDateString("de-CH", { weekday: "short", day: "numeric", month: "numeric" });
+
+/** Mehrfachauswahl-Chips (an/aus je Chip). */
+function mehrfach(optionen, { wert = [], beiWahl = null } = {}) {
+  const an = new Set(wert);
+  const knoepfe = optionen.map(([v, text]) => el("button", {
+    type: "button", class: "chip", "aria-pressed": String(an.has(v)),
+    onclick: (ev) => {
+      if (an.has(v)) an.delete(v); else an.add(v);
+      ev.currentTarget.setAttribute("aria-pressed", String(an.has(v)));
+      beiWahl?.(optionen.map(([x]) => x).filter((x) => an.has(x)));
+    },
+  }, text));
+  return { node: el("div", { class: "chips" }, knoepfe), wert: () => optionen.map(([x]) => x).filter((x) => an.has(x)) };
+}
+
+function skalaFeld([k, name, links, rechts], wert, beiWahl) {
+  const c = chips([1, 2, 3, 4, 5].map((n) => [n, String(n)]), { wert, klasse: "skala", beiWahl });
+  c.node.setAttribute("role", "group");
+  c.node.setAttribute("aria-label", `${name}, 1 ${links}, 3 wie meist, 5 ${rechts}`);
+  return { k, wert: c.wert, node: feld(name, c.node,
+    el("div", { class: "anker" }, el("span", {}, `1 ${links}`), el("span", {}, "3 wie meist"), el("span", {}, `5 ${rechts}`))) };
+}
+
+/** Gab es für die Nacht auf "tag" schon ein Alkohol-Ereignis (Vortag ab 12:00 bis 06:00, Ortszeit)? */
+function alkoholErfasst(tag, wirk) {
+  const von = `${tagPlus(tag, -1)}T12:00`, bis = `${tag}T06:00`;
+  return wirk.some((e) => e.typ === "alkohol" && e.zeit.slice(0, 16) >= von && e.zeit.slice(0, 16) < bis);
+}
+
+/**
+ * Felder eines Rückblicks. start = { daten, notiz }; merke(daten, notiz) hält
+ * einen Entwurf fest, damit das Neuzeichnen von "Heute" keine Wahl verliert.
+ */
+function rueckblickFelder(art, tag, start = {}, merke = null) {
+  const d0 = start.daten || {};
+  const stand = { daten: { ...d0 }, notiz: start.notiz || "" };
+  const neu = () => merke?.({ ...stand.daten }, stand.notiz);
+  const setze = (k) => (w) => { if (w == null) delete stand.daten[k]; else stand.daten[k] = w; neu(); };
+  const nodes = [];
+  const wirk = wirksam(zustand.alle);
+  if (art === "nacht") {
+    nodes.push(skalaFeld(SCHLAF_SKALA, d0.schlaf ?? null, setze("schlaf")).node);
+    nodes.push(feld("Was war? (optional)", mehrfach(NACHT_MERKMALE, { wert: d0.merkmale || [], beiWahl: setze("merkmale") }).node));
+    if (d0.alkohol != null || !alkoholErfasst(tag, wirk)) {
+      nodes.push(feld("Gestern Abend Alkohol? (optional)", chips(GLAESER, { wert: d0.alkohol ?? null, abwaehlbar: true, beiWahl: setze("alkohol") }).node));
+    } else {
+      nodes.push(el("p", { class: "leise" }, "Alkohol am Vorabend ist schon erfasst."));
+    }
+  } else {
+    for (const sk of TAG_SKALEN) nodes.push(skalaFeld(sk, d0[sk[0]] ?? null, setze(sk[0])).node);
+    nodes.push(feld("Besonderes heute (optional)", mehrfach(TAG_MERKMALE, { wert: d0.merkmale || [], beiWahl: setze("merkmale") }).node));
+    const nw = wirk.filter((e) => e.typ === "nebenwirkung" && logTag(new Date(e.zeit)) === tag).length;
+    if (nw) {
+      delete stand.daten.keine_nebenwirkungen;
+      nodes.push(el("p", { class: "leise" }, `Nebenwirkungen an diesem Tag: ${nw} erfasst.`));
+    } else {
+      nodes.push(feld("Nebenwirkungen", chips([[true, "heute keine"]], { wert: d0.keine_nebenwirkungen ? true : null,
+        abwaehlbar: true, beiWahl: setze("keine_nebenwirkungen") }).node));
+    }
+  }
+  const t = el("input", { type: "text", "aria-label": "Eine Zeile (optional)",
+    placeholder: art === "nacht" ? "Eine Zeile, z. B. stark geschwitzt um 3 Uhr" : "Eine Zeile (optional)" });
+  t.value = stand.notiz;
+  t.addEventListener("input", () => { stand.notiz = t.value; neu(); });
+  nodes.push(feld("", t));
+  return {
+    nodes,
+    wert: () => {
+      const daten = { [art]: tag };
+      for (const [k, v] of Object.entries(stand.daten)) {
+        if (k === art || v == null || v === false || (Array.isArray(v) && !v.length)) continue;
+        daten[k] = v;
+      }
+      pruefeRueckblick(art, daten);
+      return { daten, notiz: stand.notiz.trim() };
+    },
+  };
+}
+
+async function speichereRueckblick(art, f, alt = null) {
+  const { daten, notiz } = f.wert();
+  return erfasse(art === "nacht" ? "rueckblick_nacht" : "rueckblick_tag", daten, { notiz, ersetzt: alt?.id || null });
+}
+
+/** Ändern eines gespeicherten Rückblicks im Blatt. */
+function rueckblickBlatt(art, tag, alt) {
+  const f = rueckblickFelder(art, tag, { daten: alt.daten, notiz: alt.notiz });
+  oeffneBlatt({ titel: art === "nacht" ? `Nacht auf ${tagText(tag)}` : `Tag: ${tagText(tag)}`, untertitel: "5 ist jeweils gut, 3 wie meist.",
+    inhalt: f.nodes, knoepfe: [
+      { text: "Speichern", klasse: "haupt", aktion: async () => { const ev = await speichereRueckblick(art, f, alt); schliesseBlatt(); toastFuer(ev); } },
+      { text: "Löschen", klasse: "warn", aktion: async () => { await storniere(alt); schliesseBlatt(); } },
+      { text: "Abbrechen", klasse: "leicht voll", aktion: schliesseBlatt },
+    ] });
+}
+
+/** Ein Tipp für eine offene Medikamentengabe: ausgelassen bzw. bei Bedarf "heute nicht". */
+async function medikamentNicht(o, tag) {
+  const z = o.zeile;
+  const imTag = tag === heute();
+  let zeit, daten;
+  if (o.art === "gabe") {
+    const plan = amTag(tag, z.plan || z.von || "12:00");
+    zeit = isoLokal(imTag && plan > new Date() ? new Date() : plan);
+    daten = { mittel: z.name, gabe: z.gabe, status: "ausgelassen", zeit_geschaetzt: true };
+  } else {
+    zeit = isoLokal(imTag ? new Date() : amTag(tag, "23:59"));
+    daten = { mittel: z.name, status: "ausgelassen", grund: "heute nicht" };
+    if (!imTag) daten.zeit_geschaetzt = true;
+  }
+  if (z.supplement_id) daten.supplement_id = z.supplement_id;
+  toastFuer(await erfasse("einnahme", daten, { zeit }));
+}
+
+function rueckblickKarte(k, wirk) {
+  const key = `${k.art}|${k.tag}`;
+  const titel = k.art === "nacht" ? (k.tag === heute() ? "Letzte Nacht" : `Nacht auf ${tagText(k.tag)}`)
+    : (k.tag === heute() ? "Wie war der Tag?" : `Tag: ${tagText(k.tag)}`);
+  if (k.ev) {
+    const zeile = el("button", { type: "button", class: "zeile genommen rb-fertig", onclick: () => bearbeite(k.ev) },
+      el("span", { class: "kreis", "aria-hidden": "true" }, "✓"),
+      el("span", { class: "was" }, el("span", { class: "name" }, titel), el("small", {}, beschreibe(k.ev))),
+      el("span", { class: "rechts" }, "ändern"));
+    const offen = k.art === "tag" ? offeneBlock(k.tag, wirk) : [];
+    return offen.length ? el("div", { class: "karte rueckblick" }, zeile, ...offen) : zeile;
+  }
+  if (!k.haupt && zustand.offenKarte !== key) {
+    return el("button", { type: "button", class: "zeile rb-nachtrag", onclick: () => { zustand.offenKarte = key; zeichne(); } },
+      el("span", { class: "kreis", "aria-hidden": "true" }, ""),
+      el("span", { class: "was" }, el("span", { class: "name" }, `${titel}: noch nicht bewertet`)),
+      el("span", { class: "rechts" }, "nachtragen"));
+  }
+  const entwurf = zustand.entwurf[key] || {};
+  const f = rueckblickFelder(k.art, k.tag, entwurf, (daten, notiz) => { zustand.entwurf[key] = { daten, notiz }; });
+  const meldung = el("p", { class: "fehlertext", role: "alert", hidden: true });
+  let laeuft = false;
+  const knopf = el("button", { type: "button", class: "speichern", onclick: async () => {
+    if (laeuft) return;
+    laeuft = true;
+    try {
+      const ev = await speichereRueckblick(k.art, f);
+      delete zustand.entwurf[key];
+      if (zustand.offenKarte === key) zustand.offenKarte = null;
+      zeichne();
+      toastFuer(ev);
+    } catch (fe) { meldung.hidden = false; meldung.textContent = fe.message; }
+    finally { laeuft = false; }
+  } }, "Speichern");
+  const teile = [el("h3", {}, titel), ...f.nodes, knopf, meldung];
+  if (k.art === "tag") teile.push(...offeneBlock(k.tag, wirk));
+  return el("div", { class: "karte rueckblick" }, teile);
+}
+
+/** "Noch offen" am Abend: nur Medikamente (Gaben nach Fensterbeginn, bei Bedarf ohne Eintrag). */
+function offeneBlock(tag, wirk) {
+  const offen = offeneMedikamente(tagesplan(zustand.konfig), wirk, tag);
+  if (!offen.length) return [];
+  return [el("h4", {}, "Noch offen"), ...offen.map((o) => el("div", { class: "offenzeile" },
+    el("span", { class: "was" }, o.zeile.name, el("small", {}, o.art === "gabe" ? o.zeile.label : "bei Bedarf")),
+    el("span", { class: "chips" },
+      el("button", { type: "button", class: "chip", onclick: () => einnahmeBlatt(o.zeile, null, tag === heute() ? null
+        : { zeit: isoLokal(amTag(tag, o.zeile.plan || "20:00")), daten: { zeit_geschaetzt: true } }) }, "Genommen"),
+      el("button", { type: "button", class: "chip", onclick: () => einmal(() => medikamentNicht(o, tag)) },
+        o.art === "gabe" ? "Ausgelassen" : "Heute nicht"))))];
+}
+
+function zeichneRueckblick(wirk) {
+  // Tippt jemand gerade in die Zeile der Karte, nicht neu aufbauen (Fokus und Tastatur blieben sonst nicht)
+  const box = $("rueckblick");
+  if (box.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
+  box.replaceChildren(...rueckblickKarten(wirk).map((k) => rueckblickKarte(k, wirk)));
+}
+
 // ------------------------------------------------------------ Zeichnen
 
 function zeichneHeute(wirk) {
+  zeichneRueckblick(wirk);
   const plan = tagesplan(zustand.konfig);
   const tag = heute();
   $("planleer").hidden = plan.length > 0;
