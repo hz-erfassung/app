@@ -47,7 +47,7 @@ Durchgespielt 0.4.0 am 22.11. (Testmodus, 375 px): Speichern ohne Werte abgewies
 - Banner auf jedem Reiter, sobald der älteste nicht hochgeladene Eintrag 24 h alt ist. Im Verlauf steht, ob der Browser den Speicher dauerhaft hält (`navigator.storage.persist()`).
 - Sammelknopf je Tageszeit nur für Supplemente. Befinden mit vier Skalen, alle 5 = gut. Essen und Trinken mit einem Tipp, danach „Zeit ändern“ oder „Rückgängig“.
 - Doppeltipps speichern nur einmal; ein Tipp in den Rand des Blatts verwirft nichts.
-- Medikamente und ihre Gaben kommen aus `konfig.json` (im OneDrive, erzeugt aus `gaben.json` und dem Protokoll); im Code stehen keine Namen.
+- Medikamente und ihre Gaben kommen aus `konfig.json` (im OneDrive, erzeugt aus der Tabelle `medikament_gaben` in `hanna.db` und dem Protokoll; bis 22.11.2026 aus `gaben.json`); im Code stehen keine Namen.
 
 Durchgespielt 0.3.1 am 14.11. (Testmodus, 375 px): Medikament nach dem Zeitfenster (Jetzt vorgewählt, Plan als Chip), Dosis am Steigerungstag ohne Vorwahl mit Plan/Zuletzt, Speichern ohne Wahl abgewiesen, 15 mg mit Rückfrage, 20 → 10 → 5 → Rückgängig = 10, Ausgelassen ohne `dosis_mg`, Wach beenden und Rückgängig, Bedarfsmedikament ohne Vorwahl, Löschen nach Ändern und dann Rückgängig = nichts, Rückstand-Banner offline. 10 hochgeladene Zeilen bestehen `pruefe_zeile`. Prüfer (unabhängig): 1 hoch, 3 mittel behoben bzw. ausgelagert (siehe Offen).
 
@@ -75,4 +75,4 @@ Erster echter Lauf mit 0.3.1 am 15.11. erfolgreich (Christian): GitHub-Organisat
 - Supplemente tragen keine Dosis; Medikamente schon (je Gabe).
 - Einnahmen aus 0.2.x (ohne `gabe`) zählen in „Heute“ nicht als erledigt; für den Import gültig.
 - Nach jedem Abgleich wird „Heute“ neu gezeichnet; ein Tipp genau in diesem Augenblick kann verloren gehen (Eingaben im Blatt nie).
-- Etappe B: Abendrückblick, Morgenkarte „Letzte Nacht“, Gaben-Tabelle in `hanna.db`, Tagesgrenze 04:00. Etappe C: Nachtmodus, Wochenübersicht.
+- Etappe B fertig (23.11.2026): Rückblicke und Tagesgrenze in 0.4.0; Gaben-Tabelle `medikament_gaben` und Ableitung je Gabe (`tageslog_gaben`) nur am Laptop (Import, `gaben_pflege.py`), die App blieb dafür unverändert; Sammelknopf seit 0.3.0. Etappe C: Nachtmodus, Wochenübersicht.
