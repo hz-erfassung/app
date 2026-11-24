@@ -3,12 +3,14 @@
 // 0.3.1 (Gremium 14.11.2026): Medikamente mit Zeit "jetzt", keine Dosis-Vorwahl bei
 // Abweichung vom Plan, Rückgängig nach Ändern stellt die Vorfassung her, Rückstand-Banner.
 // 0.4 (22.11.2026, Hanna): Rückblick Nacht und Tag (Befindens-Log) mit offenen Medikamenten, Tagesgrenze 04:00.
+// 0.4.1 (24.11.2026, Kai, Gremium #9): Stand des Plans sichtbar; Plan nicht vom Tag der Einnahme = keine
+// Dosis-Vorwahl; Ändern ohne passende Planzeile behält mg und Gabe.
 
 import {
   neuesEreignis, isoLokal, wirksam, offeneWachphase, beschreibe, zeile as logzeile,
   NEBENWIRKUNGEN, STAERKEN, BEFINDEN, GRUENDE, GERAET_MUSTER,
   tagesplan, statusFuer, gehoertZu, vorbelegung, letzteDosis, amTag, TAGESZEITEN,
-  dosisVorschlag, dosisAusserhalb, rueckgaengig, rueckstand,
+  dosisVorschlag, dosisAusserhalb, rueckgaengig, rueckstand, planStand, uebernehmeBeimAendern, vorwahlGilt,
   TAG_SKALEN, SCHLAF_SKALA, NACHT_MERKMALE, TAG_MERKMALE, GLAESER,
   logTag, tagPlus, rueckblickKarten, offeneMedikamente, pruefeRueckblick,
 } from "./format.js";
@@ -17,7 +19,7 @@ import { anmelden, abmelden, rueckkehrVerarbeiten, token, eingerichtet } from ".
 import { hochladen, ladeKonfig } from "./abgleich.js";
 import { TESTMODUS } from "./konfig.js";
 
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 const $ = (id) => document.getElementById(id);
 const zustand = { alle: [], konfig: null, geraet: "iphone", tag: null, reiter: "heute", sync: { art: "" }, laeuft: false,
   entwurf: {}, offenKarte: null };
@@ -136,7 +138,8 @@ function chips(optionen, { wert = null, abwaehlbar = false, klasse = "chips", be
       beiWahl?.(aktuell);
     },
   }, text));
-  return { node: el("div", { class: klasse }, knoepfe), wert: () => aktuell };
+  const setze = (w) => { aktuell = w; knoepfe.forEach((b, i) => b.setAttribute("aria-pressed", String(optionen[i][0] === aktuell))); };
+  return { node: el("div", { class: klasse }, knoepfe), wert: () => aktuell, setze };
 }
 
 /**
@@ -196,6 +199,9 @@ const notizFeld = (wert = "", titel = "Notiz") => {
 // ------------------------------------------------------------ Einnahme
 
 const planZeile = (e) => tagesplan(zustand.konfig).find((z) => gehoertZu(e, z)) || null;
+/** "24.11., 06:20" oder "unbekannt" (#9). */
+const tagKurz = (tag) => `${tag.slice(8, 10)}.${tag.slice(5, 7)}.`;
+const standText = (ps) => ps.tag ? `${tagKurz(ps.tag)}, ${ps.uhr}` : "unbekannt";
 
 /**
  * Blatt für eine Einnahme. zeile = Zeile des Tagesplans (oder null für ein
@@ -205,25 +211,39 @@ function einnahmeBlatt(zeile, alt = null, zeitVorgabe = null) {
   const wirk = wirksam(zustand.alle);
   const d0 = alt?.daten || {};
   const inhalt = [];
-  let nameEingabe = null, dosisText = null, dosis = null, dosisAndere = null, dosisFeld = null;
+  let nameEingabe = null, dosisText = null, dosis = null, dosisAndere = null, dosisFeld = null, mgEingabe = null;
+  let vonHand = false, ausAlt = false;
 
   if (!zeile) {
     nameEingabe = el("input", { type: "text", "aria-label": "Mittel", autocomplete: "off", value: d0.mittel || "" });
     dosisText = el("input", { type: "text", "aria-label": "Dosis", value: d0.dosis || "", placeholder: "z. B. 2 Kapseln" });
     inhalt.push(feld("Mittel", nameEingabe), feld("Dosis (optional)", dosisText));
+    // 0.4.1: Ändern ohne passende Planzeile (Plan inzwischen anders): mg bleibt als eigenes Feld änderbar,
+    // die Gabe bleibt, solange das Mittel gleich bleibt (Prüfer 24.11.: sonst Freitext und mg im Widerspruch)
+    if (alt && d0.dosis_mg != null) {
+      mgEingabe = el("input", { type: "text", inputmode: "decimal", "aria-label": "Dosis in mg", value: String(d0.dosis_mg).replace(".", ",") });
+      inhalt.push(feld("Dosis in mg (leer = keine)", mgEingabe));
+    }
+    if (alt && d0.gabe) inhalt.push(el("p", { class: "leise" }, `Gabe ${d0.gabe} bleibt erhalten, solange das Mittel gleich bleibt`));
   } else if (zeile.medikament) {
-    // Gremium #4: weicht die letzte Dosis vom Plan ab, wird nichts vorgewählt
+    // Gremium #4: weicht die letzte Dosis vom Plan ab, wird nichts vorgewählt.
+    // #9 (0.4.1): ebenso, wenn der Plan nicht vom Tag der Einnahme stammt.
+    const tagDerEinnahme = isoLokal((alt || zeitVorgabe) ? new Date((alt || zeitVorgabe).zeit) : new Date()).slice(0, 10);
+    const ps = planStand(zustand.konfig, tagDerEinnahme);
+    ausAlt = d0.status === "genommen" && d0.dosis_mg != null;
     const v = dosisVorschlag({ alt: d0.status === "genommen" ? d0.dosis_mg ?? null : null, plan: zeile.dosis_mg ?? null,
-      letzte: letzteDosis(zeile.name, zeile.supplement_id, wirk, zeile.gabe) });
+      letzte: letzteDosis(zeile.name, zeile.supplement_id, wirk, zeile.gabe), planAktuell: ps.aktuell });
     const optionen = [...new Set([...(zeile.dosis_optionen || []), v.plan, v.letzte, v.wert].filter((n) => n != null))]
       .sort((a, b) => a - b).map((n) => [n, `${n} mg`]);
     optionen.push(["andere", "andere"]);
     dosisAndere = el("input", { type: "text", inputmode: "decimal", "aria-label": "Dosis in mg", hidden: true });
-    dosis = chips(optionen, { wert: v.wert, beiWahl: (w) => { dosisAndere.hidden = w !== "andere"; } });
-    const vergleich = v.abweichung ? el("div", { class: "dosisvergleich" },
-      el("span", {}, `Plan: ${v.plan} mg`), el("span", {}, `Zuletzt: ${v.letzte} mg`))
+    dosis = chips(optionen, { wert: v.wert, beiWahl: (w) => { vonHand = true; dosisAndere.hidden = w !== "andere"; } });
+    const planText = v.veraltet ? (ps.tag ? `Plan vom ${standText(ps)}: ${v.plan} mg` : `Plan (Stand unbekannt): ${v.plan} mg`) : `Plan: ${v.plan} mg`;
+    const vergleich = v.abweichung || v.veraltet ? el("div", { class: "dosisvergleich" },
+      el("span", { class: v.veraltet ? "veraltet" : "" }, planText), v.letzte != null ? el("span", {}, `Zuletzt: ${v.letzte} mg`) : null)
       : v.wert == null && v.letzte != null ? el("div", { class: "dosisvergleich" }, el("span", {}, `Zuletzt: ${v.letzte} mg`)) : null;
-    const titel = v.abweichung ? "Dosis: Plan und letzte Einnahme weichen ab, bitte wählen"
+    const titel = v.veraltet ? `Dosis: Plan ist nicht ${tagDerEinnahme === heute() ? "von heute" : `vom ${tagKurz(tagDerEinnahme)}`}, bitte wählen`
+      : v.abweichung ? "Dosis: Plan und letzte Einnahme weichen ab, bitte wählen"
       : v.wert == null ? "Dosis: bitte wählen" : "Dosis";
     dosisFeld = feld(titel, vergleich, dosis.node, dosisAndere);
     inhalt.push(dosisFeld);
@@ -250,6 +270,12 @@ function einnahmeBlatt(zeile, alt = null, zeitVorgabe = null) {
       const bekannt = tagesplan(zustand.konfig).find((z) => z.name.toLowerCase() === name.toLowerCase());
       if (bekannt?.supplement_id) daten.supplement_id = bekannt.supplement_id;
       if (dosisText.value.trim()) daten.dosis = dosisText.value.trim();
+      Object.assign(daten, uebernehmeBeimAendern(d0, name, status));
+      if (mgEingabe && status === "genommen" && mgEingabe.value.trim()) {
+        const mg = Number(mgEingabe.value.trim().replace(",", "."));
+        if (!Number.isFinite(mg) || mg < 0.01 || mg > 5000) throw new Error("Dosis in mg angeben (0,01 bis 5000) oder leer lassen.");
+        daten.dosis_mg = mg;
+      }
     }
     // Gremium #10: ausgelassen trägt keine Dosis
     if (dosis && status === "genommen") {
@@ -260,6 +286,13 @@ function einnahmeBlatt(zeile, alt = null, zeitVorgabe = null) {
         if (!roh || !Number.isFinite(mg) || mg < 0.01 || mg > 5000) throw new Error("Dosis in mg angeben (0,01 bis 5000).");
       }
       if (mg == null) throw new Error("Welche Dosis? Bitte wählen.");
+      // #9 (Prüfer 24.11.): eine Vorwahl gilt nur für den Tag, dessen Plan sie trägt. Zeit im Blatt auf
+      // einen anderen Tag gestellt oder Blatt über Mitternacht offen: neu wählen lassen.
+      const tagGespeichert = isoLokal(new Date(w.zeit)).slice(0, 10);
+      if (!vorwahlGilt({ vonHand, ausAlt, planAktuell: planStand(zustand.konfig, tagGespeichert).aktuell })) {
+        dosis.setze(null);
+        throw new Error(`Der Plan ist nicht ${tagGespeichert === heute() ? "von heute" : `vom ${tagKurz(tagGespeichert)}`}, bitte Dosis wählen.`);
+      }
       daten.dosis_mg = mg;
     }
     if (grund) daten.grund = grund;
@@ -665,6 +698,15 @@ function zeichneHeute(wirk) {
   const plan = tagesplan(zustand.konfig);
   const tag = heute();
   $("planleer").hidden = plan.length > 0;
+  // #9 (0.4.1): Stand des Plans immer sichtbar, markiert, wenn er nicht von heute ist
+  const ps = planStand(zustand.konfig, tag);
+  // Prüfer 24.11.: markiert nur, wenn es Medikamente mit Plan-Dosis gibt; sonst ändert der alte Stand nichts
+  const betroffen = plan.some((z) => z.medikament && z.dosis_mg != null);
+  const standSatz = ps.tag ? `Plan vom ${standText(ps)}` : "Stand des Plans unbekannt";
+  $("planstand").hidden = !zustand.konfig;
+  $("planstand").className = ps.aktuell || !betroffen ? "leise planstand" : "planstand veraltet";
+  $("planstand").textContent = ps.aktuell || !betroffen ? standSatz
+    : `${standSatz}, nicht von heute. Dosen der Medikamente werden nicht vorgewählt. Abgleichen holt den neuen Plan, sobald der Laptop ihn erzeugt hat.`;
   const bloecke = [];
   let faellig = 0;
   const jetztHHMM = uhr(isoLokal(new Date()));
@@ -679,7 +721,7 @@ function zeichneHeute(wirk) {
       el("div", { class: "blockkopf" }, el("h2", {}, TAGESZEITEN[block].label), el("span", { class: "leise" }, `${erledigt} von ${zeilen.length}`)),
       el("div", { class: "karte" }, mitStatus.map(({ z, s }) => {
         const st = s ? s.daten.status : "";
-        const rechts = s ? (st === "ausgelassen" ? "ausgelassen" : zeitText(s)) : (z.medikament && z.dosis_mg != null ? `${z.dosis_mg} mg` : "");
+        const rechts = s ? (st === "ausgelassen" ? "ausgelassen" : zeitText(s)) : (z.medikament && z.dosis_mg != null ? `${z.dosis_mg} mg${ps.aktuell ? "" : " (alter Plan)"}` : "");
         const klein = [z.medikament ? z.label : null, s?.daten?.dosis_mg != null ? `${s.daten.dosis_mg} mg` : null].filter(Boolean).join(" · ");
         return el("button", { type: "button", class: `zeile ${st}`, onclick: () => einnahmeBlatt(z, s ? aktuelleFassung(s) : null),
           "aria-label": `${z.name}${klein ? `, ${klein}` : ""}${s ? `, ${st} ${uhr(s.zeit)}` : ", offen"}` },

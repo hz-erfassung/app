@@ -278,3 +278,56 @@ test("pruefeRueckblick: Pflichtskalen, Bereiche, Merkmale", () => {
     { nacht: "2030-03-06", schlaf: 1, merkmale: ["geschwitzt"], alkohol: 3 })),
     "Letzte Nacht: Schlafgefühl 1, geschwitzt, Alkohol 3+ Gl.");
 });
+
+// ---- 0.4.1: Gremium #9 (Plan nicht vom Tag der Einnahme), Ändern ohne Planzeile
+import { planStand, uebernehmeBeimAendern, vorwahlGilt } from "../docs/format.js";
+
+test("planStand: aktuell nur am Tag der Erzeugung (Ortszeit), sonst nicht (#9)", () => {
+  const morgen7 = isoLokal(new Date(2030, 0, 10, 7, 5, 0));
+  const k = { v: 1, erzeugt: morgen7, mittel: [] };
+  assert.deepEqual(planStand(k, "2030-01-10"), { tag: "2030-01-10", uhr: "07:05", aktuell: true });
+  assert.equal(planStand(k, "2030-01-11").aktuell, false);        // nächster Tag: veraltet, auch nach weniger als 24 h
+  assert.equal(planStand(k, "2030-01-09").aktuell, false);        // Nachtrag für den Vortag: auch nicht sicher
+  const spaet = { erzeugt: isoLokal(new Date(2030, 0, 10, 23, 59, 0)) };
+  assert.equal(planStand(spaet, "2030-01-11").aktuell, false);     // 1 Minute alt, aber anderer Tag
+  // fail closed: ohne lesbares "erzeugt" nie aktuell
+  assert.deepEqual(planStand({ v: 1 }, "2030-01-10"), { tag: null, uhr: null, aktuell: false });
+  assert.equal(planStand({ erzeugt: "kaputt" }, "2030-01-10").aktuell, false);
+  assert.equal(planStand(null, "2030-01-10").aktuell, false);
+  // andere Zeitzone im Feld: zählt der Tag in Ortszeit des Geräts
+  const utc = new Date(2030, 0, 10, 12, 0, 0).toISOString();
+  assert.equal(planStand({ erzeugt: utc }, "2030-01-10").aktuell, true);
+});
+
+test("dosisVorschlag: veralteter Plan wählt nie vor, auch wenn Plan = letzte (#9)", () => {
+  const v = dosisVorschlag({ plan: 10, letzte: 10, planAktuell: false });
+  assert.equal(v.wert, null);
+  assert.equal(v.veraltet, true);
+  assert.deepEqual([v.plan, v.letzte], [10, 10]);                  // beide werden gezeigt
+  assert.equal(dosisVorschlag({ plan: 10, letzte: null, planAktuell: false }).wert, null);
+  assert.equal(dosisVorschlag({ alt: 15, plan: 10, planAktuell: false }).wert, 15);   // Ändern: bisherige Dosis bleibt
+  assert.equal(dosisVorschlag({ plan: 10, letzte: 10 }).veraltet, false);             // Vorgabe: aktuell
+  assert.equal(dosisVorschlag({ plan: 10, letzte: 10, planAktuell: true }).wert, 10);
+});
+
+test("vorwahlGilt: Vorwahl nur für den Tag ihres Plans, Handwahl und Vorfassung immer (#9, Prüfer 24.11.)", () => {
+  assert.equal(vorwahlGilt({ planAktuell: true }), true);
+  assert.equal(vorwahlGilt({ planAktuell: false }), false);                 // Zeit auf Vortag gestellt / über Mitternacht
+  assert.equal(vorwahlGilt({ planAktuell: false, vonHand: true }), true);
+  assert.equal(vorwahlGilt({ planAktuell: false, ausAlt: true }), true);    // Ändern: bisherige Dosis
+  assert.equal(vorwahlGilt(), false);
+  // durchgespielt: Plan vom 10.01., Blatt am 10.01. offen, gespeichert mit Zeit 09.01. → abweisen
+  const k = { erzeugt: isoLokal(new Date(2030, 0, 10, 6, 20, 0)) };
+  assert.equal(vorwahlGilt({ planAktuell: planStand(k, "2030-01-09").aktuell }), false);
+  assert.equal(vorwahlGilt({ planAktuell: planStand(k, "2030-01-10").aktuell }), true);
+});
+
+test("uebernehmeBeimAendern: Gabe bleibt, wenn das Mittel gleich bleibt; mg nie still", () => {
+  const alt = { mittel: "Medikament A", gabe: "morgens", status: "genommen", dosis_mg: 20 };
+  assert.deepEqual(uebernehmeBeimAendern(alt, "medikament a ", "genommen"), { gabe: "morgens" });
+  assert.deepEqual(uebernehmeBeimAendern(alt, "Medikament A", "ausgelassen"), { gabe: "morgens" });
+  assert.deepEqual(uebernehmeBeimAendern(alt, "Medikament B", "genommen"), {});                       // umbenannt: nichts
+  assert.deepEqual(uebernehmeBeimAendern({ mittel: "X", status: "ausgelassen", gabe: "abends" }, "X", "genommen"), { gabe: "abends" });
+  assert.deepEqual(uebernehmeBeimAendern({}, "X", "genommen"), {});
+  assert.deepEqual(uebernehmeBeimAendern(null, "X", "genommen"), {});
+});

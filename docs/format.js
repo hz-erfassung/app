@@ -271,11 +271,50 @@ export function letzteDosis(name, supplementId, wirksameEreignisse, gabe = null)
  * Titration) wird ebenfalls nichts vorgewählt: sonst speichert ein Tipp am
  * Steigerungstag still die alte Dosis (Prüfer 14.11.). "Zuletzt" wird gezeigt.
  */
-export function dosisVorschlag({ alt = null, plan = null, letzte = null } = {}) {
-  if (alt != null) return { wert: alt, abweichung: false, plan, letzte };
-  if (plan == null) return { wert: null, abweichung: false, plan, letzte };
-  if (letzte == null || letzte === plan) return { wert: plan, abweichung: false, plan, letzte };
-  return { wert: null, abweichung: true, plan, letzte };
+export function dosisVorschlag({ alt = null, plan = null, letzte = null, planAktuell = true } = {}) {
+  if (alt != null) return { wert: alt, abweichung: false, veraltet: false, plan, letzte };
+  if (plan == null) return { wert: null, abweichung: false, veraltet: false, plan, letzte };
+  // #9 (0.4.1, Entscheid Christian 24.11.): Plan nicht vom Tag der Einnahme = nie vorwählen
+  if (!planAktuell) return { wert: null, abweichung: false, veraltet: true, plan, letzte };
+  if (letzte == null || letzte === plan) return { wert: plan, abweichung: false, veraltet: false, plan, letzte };
+  return { wert: null, abweichung: true, veraltet: false, plan, letzte };
+}
+
+/**
+ * Stand des Plans (#9, 0.4.1). konfig.json trägt nur die Gaben, die am Tag
+ * ihrer Erzeugung gelten (gueltige_gaben in gaben_pflege.py, Datum je Zeile).
+ * Für einen anderen Kalendertag kann die Plan-Dosis falsch sein, etwa an einem
+ * Steigerungstag. Grenze Kalendertag (Entscheid Christian 24.11.2026).
+ * Liefert { tag, uhr, aktuell }; aktuell nur, wenn der Plan am Tag `tag`
+ * (Ortszeit, JJJJ-MM-TT) erzeugt wurde. Ohne lesbares "erzeugt" nie aktuell.
+ */
+export function planStand(konfig, tag) {
+  const ms = Date.parse(konfig?.erzeugt || "");
+  if (!Number.isFinite(ms)) return { tag: null, uhr: null, aktuell: false };
+  const lokal = isoLokal(new Date(ms));
+  return { tag: lokal.slice(0, 10), uhr: lokal.slice(11, 16), aktuell: lokal.slice(0, 10) === tag };
+}
+
+/**
+ * Ändern einer Einnahme ohne passende Planzeile (0.4.1, Prüfung 0.3.1): Das
+ * Blatt "anderes Mittel" kennt keine Gabe. Bleibt das Mittel gleich, geht die
+ * Gabe der Vorfassung mit, statt still zu verschwinden; umbenannt geht nichts
+ * mit. Die mg-Dosis trägt das Blatt als eigenes, änderbares Feld (Prüfer
+ * 24.11.: still übernommen stünde sie im Widerspruch zu einer neuen Freitext-Dosis).
+ */
+export function uebernehmeBeimAendern(alt, neuerName, status) {
+  if (!alt?.mittel || norm(alt.mittel) !== norm(neuerName)) return {};
+  return alt.gabe ? { gabe: alt.gabe } : {};
+}
+
+/**
+ * Darf eine Dosis gespeichert werden, die im Blatt steht (#9, Prüfer 24.11.)?
+ * Ja, wenn sie von Hand gewählt wurde, aus der Vorfassung stammt (Ändern) oder
+ * der Plan vom Tag der gespeicherten Zeit ist. Sonst war es eine Vorwahl aus
+ * einem Plan für einen anderen Tag (Zeit verstellt, Blatt über Mitternacht).
+ */
+export function vorwahlGilt({ vonHand = false, ausAlt = false, planAktuell = false } = {}) {
+  return !!(vonHand || ausAlt || planAktuell);
 }
 
 /** Liegt eine Dosis ausserhalb der vorgesehenen (dosis_optionen und Plan der Gabe)? */

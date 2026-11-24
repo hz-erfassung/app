@@ -1,6 +1,6 @@
 # Hanna Erfassung: Stand
 
-PWA zum Erfassen von Einnahmen, Wachphasen, Nebenwirkungen, Fokus, Essen und Trinken, Blutdruck und Notizen am iPhone. Offline, Upload ins Business-OneDrive über Microsoft Graph. Auftrag: `AI_Projekte/bereiche/gesundheit/handoff/2026-11-14_Hanna_Auftrag-Kai_Hanna-App.md`; Format: `AI_Projekte/bereiche/gesundheit/erfassung/LOGFORMAT.md`. Fassung 0.4.0 (Befindens-Log, Hanna, 22.11.2026; Vorgänger 0.3.1 Reparatur nach Gremium, 14.11.2026).
+PWA zum Erfassen von Einnahmen, Wachphasen, Nebenwirkungen, Fokus, Essen und Trinken, Blutdruck und Notizen am iPhone. Offline, Upload ins Business-OneDrive über Microsoft Graph. Auftrag: `AI_Projekte/bereiche/gesundheit/handoff/2026-11-14_Hanna_Auftrag-Kai_Hanna-App.md`; Format: `AI_Projekte/bereiche/gesundheit/erfassung/LOGFORMAT.md`. Fassung 0.4.1 (Stand des Plans und Dosis-Vorwahl, Kai, 24.11.2026; Vorgänger 0.4.0 Befindens-Log, 22.11.2026).
 
 ## Aufbau
 
@@ -36,6 +36,16 @@ Vorschau in Claude Code: `hanna-erfassung` in `AI_Projekte/.claude/launch.json`.
 - Logformat: `rueckblick_nacht`, `rueckblick_tag` (LOGFORMAT.md). Die Regeln `logTag`, `rueckblickKarten`, `offeneMedikamente`, `pruefeRueckblick` liegen in `format.js` mit Tests.
 - Bewusst nicht: direkte Adressen `#morgen`/`#abend` für einen iOS-Kurzbefehl. Ein Kurzbefehl öffnet die Adresse in Safari, und Safari hat einen anderen Speicher als die App auf dem Home-Bildschirm; Einträge lägen dann am falschen Ort. Erinnerung stattdessen über einen Kalendertermin um 21:00 (Entscheid Christian 22.11.).
 
+## Bedienung 0.4.1: Stand des Plans (Gremium #9, 24.11.2026)
+
+- „Heute“ zeigt über der Checkliste „Plan vom TT.MM., HH:MM“ (Feld `erzeugt` in `konfig.json`). Ist der Plan nicht vom heutigen Kalendertag (Entscheid Christian 24.11.: Grenze Kalendertag, nicht 24 h) und gibt es Medikamente mit Plan-Dosis, ist der Hinweis orange umrandet, und die Zeilen zeigen „(alter Plan)“. Ohne lesbares `erzeugt` gilt der Plan nie als aktuell.
+- Dosis-Vorwahl nur, wenn der Plan vom Tag der Einnahme ist (`planStand`, `dosisVorschlag` mit `planAktuell`). Sonst „Plan vom …“ und „Zuletzt …“ ohne Vorwahl. Beim Speichern wird nachgeprüft: Wurde die Zeit auf einen anderen Tag gestellt oder stand das Blatt über Mitternacht offen, gilt eine nicht von Hand gewählte Dosis nicht (`vorwahlGilt`), die Wahl wird geleert. Beim Ändern bleibt die bisherige Dosis.
+- Jeden Morgen bis zum ersten Tageslauf (ab 06:05, Laptop am Netz) und zum Abgleich ist der Plan „nicht von heute“: dann wird nichts vorgewählt. So gewollt.
+- Ändern ohne passende Planzeile (Gabe inzwischen weg): Blatt „anderes Mittel“ mit eigenem Feld „Dosis in mg“ (vorbelegt, leer = keine); die Gabe bleibt, solange das Mittel gleich bleibt.
+- Import: Eine per Rückgängig wiederhergestellte Einnahme (Inhalt gleich der ersten Fassung der Kette) zeigt die Zusammenfassung nicht mehr als „(korrigiert)“ (`_wie_ursprung` in `erfassung_import.py`).
+
+Durchgespielt 0.4.1 am 24.11. (Testmodus, 375 px): Plan vom 22.11. orange markiert, „(alter Plan)“ an den Zeilen, Dosis-Blatt ohne Vorwahl, Speichern ohne Wahl abgewiesen; Gegenprobe Plan von heute: 10 mg vorgewählt, leise Zeile. Offene Gabe mit Vorwahl, Zeit auf gestern gestellt: abgewiesen („Der Plan ist nicht vom 23.11., bitte Dosis wählen.“), Wahl geleert, Handwahl 5 mg gespeichert. Ändern mit weggefallener Gabe: mg-Feld 10, auf 7,5 geändert, Gabe erhalten. Alle 10 hochgeladenen Zeilen bestehen `pruefe_zeile`. Tests: PWA 28, Import 36. Prüfer (unabhängig, schlank): 0 kritisch, 2 wichtig, 4 klein, alle behoben.
+
 Durchgespielt 0.4.0 am 22.11. (Testmodus, 375 px): Speichern ohne Werte abgewiesen („Noch wählen: …“), Wahl bleibt nach Neuzeichnen stehen, Bedarf „Heute nicht“, Gabe „Ausgelassen“ (~12:30), Abendkarte gespeichert, Nacht nachgetragen mit Merkmal, Gläsern und Zeile, Ändern im Blatt (Energie 2 → 3, ersetzt). Hochgeladene Zeilen bestehen `pruefe_zeile`; Probelauf des Imports auf einer Kopie der echten `hanna.db` schreibt sie nach `befinden_tag`.
 
 ## Bedienung (0.3)
@@ -64,7 +74,7 @@ Durchgespielt 0.3.0 am 14.11. (Testmodus, Browser 375 px): Checkliste, Planzeit,
 Erster echter Lauf mit 0.3.1 am 15.11. erfolgreich (Christian): GitHub-Organisation gehärtet (ein Owner, 2FA, Ruleset gegen Löschen und Force Push auf `main`, nur Repo `app`), Zustimmungsdialog geprüft, Erfassen und Import laufen.
 
 
-1. **Aus der Prüfung 0.3.1, nicht im Auftrag:** veraltete `konfig.json` wirkt still weiter (#9; Plan im Gerät alt = Vorwahl der alten Dosis möglich), Ändern einer Einnahme ohne passende Planzeile verliert `dosis_mg` und `gabe`, Zusammenfassung zeigt eine per Rückgängig wiederhergestellte Einnahme als „(korrigiert)“, gemeinsame Testfälle JS/Python (#15).
+1. **Aus der Prüfung 0.3.1:** gemeinsame Testfälle JS/Python (#15). Die übrigen Punkte (#9, Ändern ohne Planzeile, „korrigiert“) sind mit 0.4.1 erledigt.
 
 ## Bekannte Grenzen
 

@@ -111,6 +111,9 @@ dialog.blatt::backdrop { background: rgba(0,0,0,.45); }
 .zeitanzeige { margin-top: 6px; font-size: .85rem; color: var(--leise); }
 .dosisvergleich { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; font-weight: 600; }
 .dosisvergleich span { padding: 8px 10px; border: 1px solid var(--rand); border-radius: 10px; background: var(--grund); }
+.dosisvergleich span.veraltet, .planstand.veraltet { color: var(--offen); border-color: var(--offen); }
+.planstand { margin: 4px 0 8px; font-size: .85rem; }
+.planstand.veraltet { padding: 8px 10px; border: 1px solid; border-radius: 10px; font-weight: 600; }
 .skala { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
 .skala .chip { border-radius: 10px; padding: 0; }
 .anker { display: flex; justify-content: space-between; font-size: .75rem; color: var(--leise); margin-top: 3px; }
