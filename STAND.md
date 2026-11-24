@@ -75,6 +75,8 @@ Erster echter Lauf mit 0.3.1 am 15.11. erfolgreich (Christian): GitHub-Organisat
 
 
 1. **Aus der Prüfung 0.3.1:** gemeinsame Testfälle JS/Python (#15). Die übrigen Punkte (#9, Ändern ohne Planzeile, „korrigiert“) sind mit 0.4.1 erledigt.
+2. **Etappe 2 (aus Kais KONTEXT übernommen, 24.11.):** Protokollanzeige und Tageszusammenfassung in der PWA. Ändern ist erledigt.
+3. **Prüfen, ob Health Auto Export Medikamenten-Einnahmen mit Uhrzeit liefert** (aus Kais KONTEXT übernommen, 24.11.). Wenn ja, wäre es ein zweiter Weg neben der App.
 
 ## Bekannte Grenzen
 
