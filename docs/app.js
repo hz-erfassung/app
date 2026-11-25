@@ -19,7 +19,7 @@ import { anmelden, abmelden, rueckkehrVerarbeiten, token, eingerichtet } from ".
 import { hochladen, ladeKonfig } from "./abgleich.js";
 import { TESTMODUS } from "./konfig.js";
 
-const VERSION = "0.4.1";
+const VERSION = "0.5.0";
 const $ = (id) => document.getElementById(id);
 const zustand = { alle: [], konfig: null, geraet: "iphone", tag: null, reiter: "heute", sync: { art: "" }, laeuft: false,
   entwurf: {}, offenKarte: null };

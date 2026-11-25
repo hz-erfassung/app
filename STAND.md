@@ -1,6 +1,6 @@
 # Hanna Erfassung: Stand
 
-PWA zum Erfassen von Einnahmen, Wachphasen, Nebenwirkungen, Fokus, Essen und Trinken, Blutdruck und Notizen am iPhone. Offline, Upload ins Business-OneDrive über Microsoft Graph. Auftrag: `AI_Projekte/bereiche/gesundheit/handoff/2026-11-14_Hanna_Auftrag-Kai_Hanna-App.md`; Format: `AI_Projekte/bereiche/gesundheit/erfassung/LOGFORMAT.md`. Fassung 0.4.1 (Stand des Plans und Dosis-Vorwahl, Kai, 24.11.2026; Vorgänger 0.4.0 Befindens-Log, 22.11.2026).
+PWA zum Erfassen von Einnahmen, Wachphasen, Nebenwirkungen, Fokus, Essen und Trinken, Blutdruck und Notizen am iPhone. Offline, Upload ins Business-OneDrive über Microsoft Graph. Auftrag: `AI_Projekte/bereiche/gesundheit/handoff/2026-11-14_Hanna_Auftrag-Kai_Hanna-App.md`; Format: `AI_Projekte/bereiche/gesundheit/erfassung/LOGFORMAT.md`. Fassung 0.5.0 (Glas-Optik, 25.11.2026; Vorgänger 0.4.1 Stand des Plans und Dosis-Vorwahl, 24.11.2026).
 
 ## Aufbau
 
@@ -25,6 +25,13 @@ py dev_server.py --wurzel %TEMP%\hanna_test_onedrive --port 8790
 ```
 
 Vorschau in Claude Code: `hanna-erfassung` in `AI_Projekte/.claude/launch.json`.
+
+## Optik 0.5.0: Glas (25.11.2026)
+
+- Auftrag Christian: Look des Glassy-Dashboards (21st.dev, MIT) übernehmen, hell und dunkel nach iPhone-Einstellung. Nur `style.css`, Statusleistenfarbe in `index.html` und Manifest; Logik unverändert. Kein fremder Code, keine fremde Schrift (CSP `style-src 'self'`): Systemschrift, Farbverlauf statt Foto.
+- Warmes Espresso bzw. Sand, Milchglas-Karten (`backdrop-filter`, Wert ausgeschrieben für ältere Safari), Pillen, Creme bzw. Dunkelbraun als Hauptfarbe, schwebende Reiterleiste mit dichterem Glas, Wach-Knopf als türkise Kachel. Kacheln (`.knopf`) ohne eigenen Weichzeichner, damit das Scrollen ruhig bleibt.
+- Durchgespielt 25.11. (Testmodus, 375 px, hell und dunkel): alle vier Reiter, Rückblick mit Wahl, Blatt Nebenwirkung, Plan mit „alter Plan“, Noch offen. Nichts ragt über den Rand (vorher ragte „nachtragen“ hinaus: Rasterkind ohne `min-width: 0`). Tests 28 grün. Prüfer (unabhängig, schlank): 1 kritisch (Verlauf vom body-Hintergrund verdeckt), 4 wichtig (Kontrast `--offen`, `--ok`, `--leise`, Zähl-Abzeichen dunkel), 7 klein; alle behoben.
+- Am Gerät noch ansehen: Statusleiste (Stil `default`) über dem schwebenden Kopf.
 
 ## Bedienung 0.4: Rückblick (Befindens-Log, 22.11.2026)
 
